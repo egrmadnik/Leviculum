@@ -36,13 +36,16 @@
 #      carries an `EXTERNAL_FLASH_DEVICES` template line under a comment
 #      that denies the part — Heltec's with the pins commented out, RAK's
 #      under "No onboard flash" — and neither board ever answered a JEDEC
-#      read. Re-adding the T114's six would drive whatever a user has
-#      plugged into its expansion header and say `id=00:00:00` about it.
+#      read. The XIAO kit joined them for the plainest reason of the
+#      three: its own variant comments the whole `PIN_QSPI_*` block out
+#      and the plain XIAO it ships marks U7 `DNP`. Re-adding the T114's
+#      six would drive whatever a user has plugged into its expansion
+#      header and say `id=00:00:00` about it.
 #   5. Which board carries which part is stated HERE as well as in the
 #      table (`TREE_PARTS`), so that walking a board file and the table
 #      back together cannot quietly change the answer — neither of them
 #      would contradict the other. Today: t114 none, rak4631 none,
-#      solarnode P25Q16H. The solar node is the one positive, and its
+#      xiaokit none, solarnode P25Q16H. The solar node is the one positive, and its
 #      evidence is a schematic rather than a variant header; the part
 #      NUMBER is still only a header's word, which is why the firmware
 #      asks the part its name at boot instead of asserting it
@@ -54,6 +57,17 @@
 # ordinals, so that board's table carries a `pinmap =` and the gate
 # resolves each define through it. Without that the check would compare
 # `PIN_QSPI_CS (22)` against P0.25 and fail a correct map.
+#
+# The XIAO kit adds the second wrinkle: its variant carries three
+# mutually exclusive `SX126X_*` pinouts in one header — legacy DIY, the
+# 30-pin BTB module and the shipped default — as an `#if`/`#else`
+# ladder, so every LoRa define appears three times under one name and a
+# raw scan reads the first branch, which is the legacy one nobody
+# builds. The table's `unselected` names the two selector macros this
+# board does not compile, `active_lines` drops those branches and keeps
+# their `#else` halves, and what remains resolves to `D`-tokens
+# (`SX126X_CS D4`) — indices into the same kind of `g_ADigitalPinMap`,
+# so they go through `pinmap` exactly like the solar node's `(22)`.
 #
 # A board left with no checked rows at all is an error, not a quiet pass:
 # that is the shape a board takes when everything is removed from under
@@ -104,7 +118,12 @@ PINMAP_RE = re.compile(r"g_ADigitalPinMap\s*\[\s*\]\s*=\s*\{(.*?)\}\s*;", re.S)
 
 # What each board is allowed to declare, stated here as well as in
 # reference-pins.toml. Editing one alone is the failure this catches.
-TREE_PARTS = {"t114": "none", "rak4631": "none", "solarnode": "P25Q16H"}
+TREE_PARTS = {
+    "t114": "none",
+    "rak4631": "none",
+    "solarnode": "P25Q16H",
+    "xiaokit": "none",
+}
 
 
 def pin_name(n):
@@ -156,7 +175,12 @@ def digital_pin_map(text):
 
 
 def define_value(text, name):
-    """`#define NAME (32 + 14)` → 46. None if absent or commented out."""
+    """`#define NAME (32 + 14)` → 46; `#define NAME D4` → ("D", 4).
+
+    The pair is Seeed's other index shape: their `SX126X_*` defines are
+    D-numbers — indices into `g_ADigitalPinMap` — so the value is not an
+    ordinal and must go through the board's `pinmap` like the
+    parenthesised indices do. None if absent or commented out."""
     for line in text.splitlines():
         line = line.split("//")[0].strip()
         if not line.startswith("#define"):
@@ -165,11 +189,66 @@ def define_value(text, name):
         if not m:
             continue
         v = m.group(1).strip()
+        dtok = re.fullmatch(r"D(\d+)", v)
+        if dtok:
+            return ("D", int(dtok.group(1)))
         parts = re.fullmatch(r"\(?\s*(\d+)\s*(?:\+\s*(\d+)\s*)?\)?", v)
         if not parts:
             return None
         return int(parts.group(1)) + int(parts.group(2) or 0)
     return None
+
+
+def active_lines(text, unselected=frozenset()):
+    """Variant text with the branches a build does not take removed.
+
+    Some Seeed variants carry several mutually exclusive pinouts in one
+    header behind `#if defined(M)`/`#else` ladders (the kit's three
+    `SX126X_*` sets are the case in this tree). `unselected` is the set
+    of selector macros this board does not compile: a `#if defined(M)`
+    or `#ifdef M` for M in it is skipped to its `#else`, which is then
+    kept. Every other conditional — include guards, `#ifdef
+    __cplusplus`, `#elif`, expressions the filter cannot evaluate — is
+    transparent: both halves are scanned, exactly as the unfiltered read
+    treated the whole file. That transparency is deliberate: a branch we
+    cannot classify is left able to produce a "not defined" or a wrong
+    pin — loud failures — never a silent wrong pass.
+    """
+    out = []
+    # Frame states: None transparent, True scanning half of a choice,
+    # False skipped.
+    stack = []
+    for line in text.splitlines():
+        s = line.split("//")[0].strip()
+        m = re.match(
+            r"#\s*ifdef\s+(\w+)\s*$|#\s*if\s+defined\s*\(?\s*(\w+)\s*\)?\s*$", s
+        )
+        if s.startswith("#if"):
+            if m and (m.group(1) or m.group(2)) in unselected:
+                stack.append(False)
+            elif all(f is not False for f in stack):
+                stack.append(None)
+            else:
+                stack.append(False)
+            continue
+        if s.startswith("#else"):
+            # The else of a skipped branch is the branch a build takes;
+            # the else of a taken one is dead to it — but only when no
+            # outer frame is already skipping this region.
+            if stack and stack[-1] is False and all(
+                f is not False for f in stack[:-1]
+            ):
+                stack[-1] = True
+            elif stack and stack[-1] is True:
+                stack[-1] = False
+            continue
+        if s.startswith("#endif"):
+            if stack:
+                stack.pop()
+            continue
+        if all(f is not False for f in stack):
+            out.append(line)
+    return "\n".join(out)
 
 
 def check_aliases(board, group, entries, text, where):
@@ -215,10 +294,25 @@ def check_call_site(board, group, entries, text, where):
     return out
 
 
-def check_variant(board, group, entries, text, where, pinmap=None):
+def check_variant(board, group, entries, text, where, pinmap=None, unselected=frozenset()):
     out = []
+    if unselected:
+        text = active_lines(text, unselected)
     for key, e in entries.items():
         got = define_value(text, e["define"])
+        if isinstance(got, tuple):
+            # `D4`: a D-number, an index into `g_ADigitalPinMap` — the
+            # same indirection as the parenthesised indices, so it joins
+            # the pinmap path below. A board whose defines are D-tokens
+            # and which records no pinmap cannot be checked.
+            if pinmap is None:
+                out.append(
+                    f"{where}: {board} {group}.{key}: {e['define']} is "
+                    f"D{got[1]} upstream, an index into g_ADigitalPinMap, "
+                    f"and {board} records no `pinmap` to resolve it through"
+                )
+                continue
+            got = got[1]
         if got is not None and pinmap is not None:
             if got >= len(pinmap):
                 out.append(
@@ -310,9 +404,11 @@ def check_tree_parts(table):
     one needs a second edit, in a second file, in a script whose header
     says what the current answer is and why.
 
-    Both "none"s are #384: the T114's and the RAK4631's maps came from an
-    `EXTERNAL_FLASH_DEVICES` line sitting under a comment denying the
-    part, and neither board ever answered `9Fh`. The solar node's
+    The first two "none"s are #384: the T114's and the RAK4631's maps
+    came from an `EXTERNAL_FLASH_DEVICES` line sitting under a comment
+    denying the part, and neither board ever answered `9Fh`. The kit's
+    "none" is plainer still: its own variant comments the defines out
+    and its module's schematic marks U7 `DNP`. The solar node's
     `P25Q16H` is the one positive and rests on Seeed's schematic for the
     six nets; the part number itself is still a header's word, which the
     firmware settles by asking at boot rather than asserting.
@@ -447,6 +543,39 @@ FIX_PINMAP = {
     "cs": {"pin": 25, "alias": "QspiCs", "define": "PIN_QSPI_CS"},
 }
 
+# The seventh: the kit's `#if`/`#else` pinout ladder plus its `D`-token
+# defines, both resolved through the pinmap. The good fixture is the
+# default branch's map; the bad one moves CS inside that branch. The
+# third fixture changes only the branch nobody builds — the check must
+# NOT fire on it, or it is gating the pinout this board is not.
+BRANCH_VARIANT = """
+#if defined(LEGACY_BOARD)
+#define SX126X_CS D0
+#define PIN_SPI_SCK D8
+#else
+#if defined(BTB_BOARD)
+#define SX126X_CS D3
+#define PIN_SPI_SCK D8
+#else
+#define SX126X_CS D4
+#define PIN_SPI_SCK D8
+#endif
+#endif
+"""
+BRANCH_CPP = """
+const uint32_t g_ADigitalPinMap[] = {
+    0, 1, 2, 3, 4, 5, 6, 7,
+    45, // D8 P1.13
+};
+"""
+BAD_BRANCH_VARIANT = BRANCH_VARIANT.replace("#define SX126X_CS D4", "#define SX126X_CS D1")
+LEGACY_CHANGED_VARIANT = BRANCH_VARIANT.replace("#define SX126X_CS D0", "#define SX126X_CS D2")
+FIX_BRANCH = {
+    "cs": {"pin": 4, "alias": "LoRaCs", "define": "SX126X_CS"},
+    "sck": {"pin": 45, "alias": "LoRaSck", "define": "PIN_SPI_SCK"},
+}
+FIX_UNSELECTED = frozenset({"LEGACY_BOARD", "BTB_BOARD"})
+
 
 def self_test():
     rc = 0
@@ -514,6 +643,36 @@ def self_test():
             indexed,
             GOOD_PINMAP_CPP,
             BAD_PINMAP_CPP,
+        ),
+        (
+            "branched variant",
+            "a moved pin inside the branch this board builds",
+            lambda text: check_variant(
+                "xiaokit",
+                "lora",
+                FIX_BRANCH,
+                text,
+                "<fixture>",
+                digital_pin_map(BRANCH_CPP),
+                FIX_UNSELECTED,
+            ),
+            BRANCH_VARIANT,
+            BAD_BRANCH_VARIANT,
+        ),
+        (
+            "unselected branch",
+            "a moved pin in a branch this board does NOT build — must not fire",
+            lambda text: check_variant(
+                "xiaokit",
+                "lora",
+                FIX_BRANCH,
+                text,
+                "<fixture>",
+                digital_pin_map(BRANCH_CPP),
+                FIX_UNSELECTED,
+            ),
+            LEGACY_CHANGED_VARIANT,
+            BAD_BRANCH_VARIANT,
         ),
     )
     for label, fires_on, probe, good, bad in cases:
@@ -687,6 +846,7 @@ for board, spec in table.items():
                         variant.read_text(encoding="utf-8"),
                         spec["variant"],
                         pinmap,
+                        frozenset(spec.get("unselected", ())),
                     )
         for p in problems:
             print(f"{TAG} FAIL {p}")

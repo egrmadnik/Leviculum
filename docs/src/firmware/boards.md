@@ -207,7 +207,8 @@ needs the identifier before it can.
 
 ### Family C: XIAO nRF52840 + Wio-SX1262
 
-`solarnode` binary. NSS `P0.04`, SCK `P1.13`, MOSI `P1.15`, MISO `P1.14`,
+`solarnode` and `xiaokit` binaries — same radio map, two carriers. NSS
+`P0.04`, SCK `P1.13`, MOSI `P1.15`, MISO `P1.14`,
 BUSY `P0.29`, DIO1 `P0.03`, NRESET `P0.28`, TCXO at 1.8 V via DIO3, DIO2
 as antenna switch **and an external RX enable on `P0.05`**. That last pin
 is what this family adds to the shared code: DIO2 steers only the
@@ -219,15 +220,29 @@ key-up (`rx_frontend`, `leviculum-nrf/src/sx1262.rs:373`;
 | Product | Level | Note |
 |---|---|---|
 | Seeed SenseCAP Solar Node P1-Pro | **Bring-up** | On the rig since 2026-09-15; radio and GNSS not yet confirmed on the bench |
-| Seeed XIAO nRF52840 + Wio-SX1262 kit | Expected | Same two modules, same seven pins plus RXEN |
+| Seeed XIAO nRF52840 + Wio-SX1262 kit | Expected | Own `xiaokit` binary; same seven pins plus RXEN, module LED and divider on the XIAO itself |
 | Wio Tracker L1 / L1 e-ink | Not covered | Different carrier, LEDs and battery sense not checked |
 
-The image drives, besides the radio, one LED on `P0.19`, the battery
-divider on `P0.31`/`P0.14` and the XIAO L76K GNSS on `P1.11`/`P1.12`.
-There is no display. That the kit above can be *Expected* at all is
-largely because the modules decide the radio and the carrier decides the
-rest: a carrier that omits the L76K reports `no-hardware` at run time
-rather than needing an image of its own.
+The `solarnode` image drives, besides the radio, one LED on `P0.19`, the
+battery divider on `P0.31`/`P0.14` and the XIAO L76K GNSS on
+`P1.11`/`P1.12`. There is no display.
+
+The kit is the case the family rule almost covers — same two modules,
+same radio — and the reason it still gets its own binary is that what
+differs is not a peripheral that degrades but the board's *identity*.
+The kit has no carrier: its LED is the XIAO module's own common-anode
+RGB on `P0.30`/`P0.06`/`P0.26`, **active low** where the carrier's are
+active high, so a panic blink and a fault blink the solar node's
+polarity writes would be invisible here. It has no GNSS enable line (a
+fitted L76K is simply powered, `GnssWiring.power_enable = None`), no
+user button, and no QSPI part — the plain XIAO marks the footprint
+`DNP` and the kit's variant comments the pins out, so
+`qspi_part = "none"` like the T114's and the RAK4631's, and the boot
+line reads `[QSPI] NONE board=xiaokit` rather than the solar node's
+ask-at-boot probe. It keeps the same UART pair and standby line for the
+L76K, and the same battery divider, which lives on the module. What it
+does add is the BQ25101's ISET pin `P0.13`, driven low for the 100 mA
+charge current upstream's `initVariant` chooses.
 
 The battery sampler is in (Codeberg #233), and it reads *this* board's
 divider: the XIAO module's own 1 MΩ over 510 kΩ, which puts the whole
@@ -271,12 +286,14 @@ it is asserting a pack this product does not have.
 The bootloader cannot tell these apart. `nRF52840-SeeedXiao-v1` names the
 MCU module, and a DIY XIAO with an entirely different radio wired to the
 same pads reports exactly the same string, so `lnflash` has no *flashing*
-entry for this board and must not be given one on that evidence
-(Codeberg #233). It does have a control-only catalogue entry, keyed on
-the USB ID our own firmware publishes (`1209:0003`), so `--watch`,
-`--announce`, `--set-time` and the `--radio-*` flags reach this board
-like any other; a bundle carrying an image named after it is refused when
-it loads. Writing firmware goes through `just flash-solarnode`, which is
+entry for either board of this family and must not be given one on that
+evidence (Codeberg #233). It does have control-only catalogue entries,
+keyed on the USB IDs our own firmware publishes (`1209:0003` for the
+solar node, `1209:0004` for the kit), so `--watch`,
+`--announce`, `--set-time` and the `--radio-*` flags reach these boards
+like any other; a bundle carrying an image named after either is refused when
+it loads. Writing firmware goes through `just flash-solarnode` and
+`just flash-xiaokit`, which are
 told the `Board-ID` explicitly by a person who can see which board is on
 the bench, and for the first flash the image goes onto the mass-storage
 volume by hand.
@@ -382,7 +399,8 @@ be settled before the family is presented as broadly supported.
 
 ## Cargo features and binaries
 
-Three firmware binaries are defined, one per board family:
+Four firmware binaries are defined, one per board family (the XIAO family
+has two — same radio map, two carriers):
 
 ```text
 [[bin]]
@@ -396,24 +414,29 @@ path = "src/bin/rak4631.rs"
 [[bin]]
 name = "solarnode"
 path = "src/bin/solarnode.rs"
+
+[[bin]]
+name = "xiaokit"
+path = "src/bin/xiaokit.rs"
 ```
 
-(`leviculum-nrf/Cargo.toml:391-401`)
+(`leviculum-nrf/Cargo.toml:400-415`)
 
 The board-support-package (BSP) features select the runtime for a given
 board. Exactly one BSP feature must be enabled per build; a
 `compile_error!` in `lib.rs` enforces the mutual exclusion.
-(`leviculum-nrf/src/lib.rs:34-43`)
+(`leviculum-nrf/src/lib.rs:37-49`)
 
 | Feature | Effect | Cite |
 |---------|--------|------|
 | `bsp-t114` | T114 BSP (+ SoftDevice BLE + status display + GNSS + battery) | `leviculum-nrf/Cargo.toml:330` |
 | `bsp-rak4631` | RAK4631 BSP (+ SoftDevice BLE) | `leviculum-nrf/Cargo.toml:314` |
 | `bsp-solarnode` | SenseCAP Solar Node P1-Pro BSP (+ SoftDevice BLE + battery + GNSS). No display | `leviculum-nrf/Cargo.toml:351` |
-| `display` | SSD1306 OLED, probed at run time | `leviculum-nrf/Cargo.toml:353` |
-| `gnss` | NMEA0183 GNSS (ZOE-M8Q on the V2 baseboard, L76K on the T114 and the Solar Node) | `leviculum-nrf/Cargo.toml:354` |
-| `battery` | pack-voltage monitor: the `BATTERY` log line, the panel's voltage and, on the V2, the telemetry field. Unconditional under `bsp-t114` (the divider is on every T114) and under `bsp-solarnode` (it is on the XIAO module), opt-in on the V2 via `rak-baseboard` | `leviculum-nrf/Cargo.toml:360` |
-| `rak-baseboard` | aggregate of `display` + `gnss` + `battery` | `leviculum-nrf/Cargo.toml:361` |
+| `bsp-xiaokit` | XIAO nRF52840 + Wio-SX1262 kit BSP (+ SoftDevice BLE + battery + GNSS). No display, no QSPI part | `leviculum-nrf/Cargo.toml:361` |
+| `display` | SSD1306 OLED, probed at run time | `leviculum-nrf/Cargo.toml:363` |
+| `gnss` | NMEA0183 GNSS (ZOE-M8Q on the V2 baseboard, L76K on the T114 and the XIAO boards) | `leviculum-nrf/Cargo.toml:364` |
+| `battery` | pack-voltage monitor: the `BATTERY` log line, the panel's voltage and, on the V2, the telemetry field. Unconditional under `bsp-t114` (the divider is on every T114) and under the XIAO BSPs (it is on the XIAO module), opt-in on the V2 via `rak-baseboard` | `leviculum-nrf/Cargo.toml:370` |
+| `rak-baseboard` | aggregate of `display` + `gnss` + `battery` | `leviculum-nrf/Cargo.toml:371` |
 
 > **Note on BLE:** Both firmware entry points register a BLE interface
 > and call `leviculum_nrf::ble::init`
@@ -437,10 +460,12 @@ The mapping from board to binary and features used by the flash recipes:
 | Heltec Mesh Node T114 | `t114` | `bsp-t114` |
 | RAK4631 (bare module) | `rak4631` | `bsp-rak4631` |
 | WisMesh Pocket V2 (full baseboard) | `rak4631` | `bsp-rak4631,rak-baseboard` |
+| SenseCAP Solar Node P1-Pro | `solarnode` | `bsp-solarnode` |
+| Seeed XIAO nRF52840 + Wio-SX1262 kit | `xiaokit` | `bsp-xiaokit` |
 
-(Feature sets as invoked in the `just flash`, `just flash-rak4631`, and
-`just flash-rak4631-pocket` recipes: `Justfile:1864`, `Justfile:1892`,
-`Justfile:1906`.)
+(Feature sets as invoked in the `just flash`, `just flash-rak4631`,
+`just flash-rak4631-pocket`, `just flash-solarnode` and
+`just flash-xiaokit` recipes.)
 
 ### What the `lnflash` bundle carries
 

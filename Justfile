@@ -76,6 +76,7 @@ lint-nrf:
     cd leviculum-nrf && cargo clippy --features bsp-rak4631,rak-baseboard -- -D warnings
     cd leviculum-nrf && cargo clippy --features bsp-t114 -- -D warnings
     cd leviculum-nrf && cargo clippy --features bsp-solarnode -- -D warnings
+    cd leviculum-nrf && cargo clippy --features bsp-xiaokit -- -D warnings
     # The QSPI self-test instrument sits behind its own feature (Cargo.toml,
     # `qspi-selftest`, for why), so the line above no longer builds it.
     cd leviculum-nrf && cargo clippy --features bsp-solarnode,qspi-selftest --bin qspi-selftest -- -D warnings
@@ -124,6 +125,7 @@ lint-nrf:
     cd leviculum-nrf && RUSTDOCFLAGS="-D warnings" cargo doc -p leviculum-nrf --no-deps --features bsp-rak4631,rak-baseboard
     cd leviculum-nrf && RUSTDOCFLAGS="-D warnings" cargo doc -p leviculum-nrf --no-deps --features bsp-t114
     cd leviculum-nrf && RUSTDOCFLAGS="-D warnings" cargo doc -p leviculum-nrf --no-deps --features bsp-solarnode
+    cd leviculum-nrf && RUSTDOCFLAGS="-D warnings" cargo doc -p leviculum-nrf --no-deps --features bsp-xiaokit
 
 # Build the ESP32-class firmware (Heltec WiFi LoRa 32 V4) and package the
 # flash image.
@@ -1937,6 +1939,23 @@ flash-solarnode-one PORT:
 [doc('Measurement tool: ERASES all SolarNode external flash, tests it')]
 flash-solarnode-qspi-selftest:
     cd leviculum-nrf && {{solarnode_env}} cargo run --release --bin qspi-selftest --features bsp-solarnode,qspi-selftest
+
+# Same Board-ID caveat as the solar node, squared: this board IS a bare
+# XIAO module, so `nRF52840-SeeedXiao-v1` says nothing at all about what
+# radio is wired to it. Control sessions key on our firmware's own USB ID
+# instead (lnflash/catalogue.toml).
+xiaokit_env := 'LEVICULUM_USB_PID=0004 LEVICULUM_BOARD_NAME=XiaoKit LEVICULUM_UF2_BOARD_ID=nRF52840-SeeedXiao-v1 LEVICULUM_DOUBLE_TAP_HINT="Double-tap the tiny RST button beside the USB-C socket to enter the UF2 bootloader."'
+
+# The FIRST image goes onto the mass-storage volume by hand, as on the
+# solar node: stock firmware has no 1200-baud-touch handler. Subsequent
+# flashes use the touch path automatically.
+[doc('Flash every attached XIAO nRF52840 + Wio-SX1262 kit with our firmware')]
+flash-xiaokit:
+    cd leviculum-nrf && {{xiaokit_env}} cargo run --release --bin xiaokit --features bsp-xiaokit
+
+[doc('Flash a single XIAO nRF52840 + Wio-SX1262 kit by port path or udev symlink')]
+flash-xiaokit-one PORT:
+    cd leviculum-nrf && LEVICULUM_FLASH_ONLY={{PORT}} {{xiaokit_env}} cargo run --release --bin xiaokit --features bsp-xiaokit
 
 # Trigger Adafruit-UF2-bootloader on a stock-Meshtastic WisMesh Pocket V2.
 # Stock Meshtastic has no 1200-bps-touch handler and the device has no

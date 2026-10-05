@@ -1206,7 +1206,7 @@ fn the_transmit_deferral_is_spent_once_per_externally_paced_event() {
 /// lapped gets it anyway. Either half alone leaves a window with no answer.
 #[test]
 fn the_identity_lines_are_not_dropped_by_the_runtime_gate() {
-    for bin in ["bin/t114.rs", "bin/rak4631.rs", "bin/solarnode.rs"] {
+    for bin in ["bin/t114.rs", "bin/rak4631.rs", "bin/solarnode.rs", "bin/xiaokit.rs"] {
         let src = nrf_source(bin);
         assert!(
             !src.contains(r#"log_fmt("[IDENTITY] ""#),
@@ -1287,7 +1287,7 @@ fn the_identity_lines_are_not_dropped_by_the_runtime_gate() {
 /// host test.
 #[test]
 fn the_time_source_banner_mirrors_the_node_rather_than_the_seeding_sites() {
-    for bin in ["bin/t114.rs", "bin/rak4631.rs", "bin/solarnode.rs"] {
+    for bin in ["bin/t114.rs", "bin/rak4631.rs", "bin/solarnode.rs", "bin/xiaokit.rs"] {
         let src = nrf_source(bin);
         assert!(
             src.contains("set_time_source(node.time_source())"),

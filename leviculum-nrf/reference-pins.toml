@@ -38,6 +38,18 @@
 # word, so the firmware asks rather than asserts — see
 # `leviculum-nrf/src/boards/solarnode.rs`.
 #
+# The XIAO kit is a third "none", and the plainest: its own variant
+# comments the whole `PIN_QSPI_*` block AND the `EXTERNAL_FLASH_DEVICES`
+# line out, and the plain XIAO the kit ships marks U7 `DNP` on the
+# module's schematic. Its LoRa rows ARE gated — the kit variant carries
+# three mutually exclusive `SX126X_*` pinouts behind an `#if`/`#else`
+# ladder (legacy DIY, the 30-pin BTB module, the shipped default), and
+# `unselected` names the two selector macros this board does not build,
+# so the gate reads the default branch alone; scanning the raw file
+# would take the first branch, which is the legacy one nobody ships.
+# The default branch's defines are then `D`-tokens (`SX126X_CS D4`),
+# resolved through `pinmap` like the solar node's indexed defines.
+#
 # T114: Heltec's own HT-n5262 variant has the QSPI pins commented out and
 # keeps only the `EXTERNAL_FLASH_*` defines, the sibling HT-n5262G gives
 # P1.14 to `PIN_GPS_RESET` and P1.12 to the display backlight, all six
@@ -117,3 +129,28 @@ io0 = { pin = 20, alias = "QspiIo0", define = "PIN_QSPI_IO0" }
 io1 = { pin = 24, alias = "QspiIo1", define = "PIN_QSPI_IO1" }
 io2 = { pin = 22, alias = "QspiIo2", define = "PIN_QSPI_IO2" }
 io3 = { pin = 23, alias = "QspiIo3", define = "PIN_QSPI_IO3" }
+
+# No QSPI part, and therefore no [boards.xiaokit.qspi] table — the kit
+# ships the plain XIAO, whose own schematic marks U7 `DNP` and whose
+# variant comments the pins out. See the header.
+[boards.xiaokit]
+board = "leviculum-nrf/src/boards/xiaokit.rs"
+bin = "leviculum-nrf/src/bin/xiaokit.rs"
+variant = "variants/nrf52840/seeed_xiao_nrf52840_kit/variant.h"
+pinmap = "variants/nrf52840/seeed_xiao_nrf52840_kit/variant.cpp"
+unselected = ["XIAO_BLE_LEGACY_PINOUT", "SEEED_XIAO_NRF_WIO_BTB"]
+qspi_part = "none"
+
+[boards.xiaokit.lora]
+sck = { pin = 45, alias = "LoRaSck", define = "PIN_SPI_SCK" }
+mosi = { pin = 47, alias = "LoRaMosi", define = "PIN_SPI_MOSI" }
+miso = { pin = 46, alias = "LoRaMiso", define = "PIN_SPI_MISO" }
+cs = { pin = 4, alias = "LoRaCs", define = "SX126X_CS" }
+reset = { pin = 28, alias = "LoRaReset", define = "SX126X_RESET" }
+busy = { pin = 29, alias = "LoRaBusy", define = "SX126X_BUSY" }
+dio1 = { pin = 3, alias = "LoRaDio1", define = "SX126X_DIO1" }
+# The Wio-SX1262's second front-end line — handed to `lora::init` as
+# `Some(..)` after the seven positional pins, so `call_site = false` like
+# the RAK's power_en: the positional check reads only the seven-pin
+# prefix and the alias plus the upstream half still gate it.
+rxen = { pin = 5, alias = "LoRaRxEnable", define = "SX126X_RXEN", call_site = false }

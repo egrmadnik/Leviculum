@@ -141,17 +141,22 @@ firmware build, the UF2 conversion, the staging, the manifest sections
 and the licence assertions against the finished tarball all derive from
 it.
 
-**The SenseCAP Solar Node is known but not flashed here** (Codeberg
-#233). `lnflash` talks to it like any other board — `--watch`,
+**The SenseCAP Solar Node and the XIAO + Wio-SX1262 kit are known but not
+flashed here** (Codeberg #233). `lnflash` talks to them like any other
+board — `--watch`,
 `--announce`, `--set-time`, `--set-name`, the `--radio-*` flags — because
 those reach a board that is up and identifying itself. Writing firmware
-to it is a different question and the answer is no: the `Board-ID` its
+to them is a different question and the answer is no: the `Board-ID` their
 bootloader publishes, `nRF52840-SeeedXiao-v1`, belongs to the XIAO module
-rather than to this product, and a DIY XIAO with the radio wired
-elsewhere reports the same string. So the bundle carries no image for it,
-`--board solarnode` is refused, and a flash session that finds it on the
-bus names it, says why, and leaves it alone. It is flashed from this
-checkout with `just flash-solarnode`, by a person who can see which board
+rather than to either product, and a DIY XIAO with the radio wired
+elsewhere reports the same string — which for the kit is literally what
+it is, a bare module with a radio stacked on it. So the bundle carries no
+image for either,
+`--board solarnode` and `--board xiaokit` are refused, and a flash
+session that finds one on the
+bus names it, says why, and leaves it alone. They are flashed from this
+checkout with `just flash-solarnode` and `just flash-xiaokit`, by a
+person who can see which board
 is on the bench.
 
 **The SoftDevice carve-out.** The T114 entry ships Nordic's S140 7.3.0

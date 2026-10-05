@@ -349,6 +349,16 @@ bsp-t114 = ["softdevice", "dep:leviculum-screen", "gnss", "battery"]
 # differences are pins and the absent PPS line, and both live in the
 # `GnssWiring` value in `bin/solarnode.rs`.
 bsp-solarnode = ["softdevice", "battery", "gnss"]
+# Seeed XIAO nRF52840 + Wio-SX1262 kit (SKU 102010710): the same two
+# modules as the solar node with no carrier board between them. Same
+# radio map, same battery divider on the module; the differences are the
+# carrier's — its LEDs (the kit's RGB is the module's, active low), its
+# GNSS enable line (absent; a fitted L76K is simply powered) and its
+# buttons (none). `gnss` stays unconditional anyway, for the same
+# universal-build reason as on the other two XIAO carriers: the L76K is
+# an add-on the kit does not include, and a receiver that is absent
+# reports `no-hardware` at runtime rather than needing a UF2 of its own.
+bsp-xiaokit = ["softdevice", "battery", "gnss"]
 
 display = ["dep:ssd1306", "dep:embedded-graphics", "dep:leviculum-screen"]
 gnss = [
@@ -399,6 +409,10 @@ path = "src/bin/rak4631.rs"
 [[bin]]
 name = "solarnode"
 path = "src/bin/solarnode.rs"
+
+[[bin]]
+name = "xiaokit"
+path = "src/bin/xiaokit.rs"
 
 # Measurement instrument, not firmware: prints the S140's required app
 # RAM base for a series of BLE configs (#255 T2 central-role design).

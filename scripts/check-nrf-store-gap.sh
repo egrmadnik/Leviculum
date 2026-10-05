@@ -175,7 +175,9 @@ rc=0
 build t114 bsp-t114
 build rak4631 bsp-rak4631,rak-baseboard
 build solarnode bsp-solarnode
+build xiaokit bsp-xiaokit
 check t114 || rc=1
 check rak4631 || rc=1
 check solarnode || rc=1
+check xiaokit || rc=1
 exit "$rc"

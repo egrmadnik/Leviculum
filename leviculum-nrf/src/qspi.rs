@@ -1,6 +1,7 @@
-//! The QSPI NOR flash two of our three boards turned out not to carry.
+//! The QSPI NOR flash three of our four boards turned out not to carry.
 //!
-//! **The T114 and the RAK4631 carry none, and one board does ask:** the
+//! **The T114, the RAK4631 and the XIAO kit carry none, and one board
+//! does ask:** the
 //! SolarNode's `CONFIG.qspi_part` is [`P25Q16H`] and `bin/solarnode.rs`
 //! calls [`identify_at_boot`] once at boot. The two negatives came from
 //! an `EXTERNAL_FLASH_DEVICES` line in a vendor variant header, and on
@@ -9,11 +10,16 @@
 //! wrote "No onboard flash" over the RAK4631's and marked the pins
 //! "occupied by GPIO's". Three units — two T114s and the field Pocket —
 //! answer nothing to `05h`, `9Fh`, `90h` or the datasheet reset while
-//! every pin follows our drive. Both `CONFIG.qspi_part` are `None`, both
+//! every pin follows our drive. The XIAO kit's "none" is plainer still:
+//! its own variant comments the `PIN_QSPI_*` block and the
+//! `EXTERNAL_FLASH_DEVICES` line out, and the plain XIAO it ships marks
+//! U7 `DNP` on the module's schematic. All three `CONFIG.qspi_part` are
+//! `None`, all three
 //! firmwares print `[QSPI] NONE board=<b>` at boot instead of coming
 //! here, and the evidence with its URLs is in
-//! `leviculum-nrf/src/boards/t114.rs` and
-//! `leviculum-nrf/src/boards/rak4631.rs` (Codeberg #384).
+//! `leviculum-nrf/src/boards/t114.rs`,
+//! `leviculum-nrf/src/boards/rak4631.rs` and
+//! `leviculum-nrf/src/boards/xiaokit.rs` (Codeberg #384).
 //!
 //! The SolarNode is a different claim and it is not a variant header's:
 //! Seeed's own schematic for the XIAO nRF52840 Plus module draws U7, an

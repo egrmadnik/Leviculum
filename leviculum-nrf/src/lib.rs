@@ -29,18 +29,24 @@ extern crate alloc;
 #[cfg(any(
     all(feature = "bsp-rak4631", feature = "bsp-t114"),
     all(feature = "bsp-rak4631", feature = "bsp-solarnode"),
+    all(feature = "bsp-rak4631", feature = "bsp-xiaokit"),
     all(feature = "bsp-t114", feature = "bsp-solarnode"),
+    all(feature = "bsp-t114", feature = "bsp-xiaokit"),
+    all(feature = "bsp-solarnode", feature = "bsp-xiaokit"),
 ))]
 compile_error!(
-    "`bsp-rak4631`, `bsp-t114` and `bsp-solarnode` are mutually exclusive — pick exactly one"
+    "`bsp-rak4631`, `bsp-t114`, `bsp-solarnode` and `bsp-xiaokit` are mutually exclusive — pick exactly one"
 );
 
 #[cfg(not(any(
     feature = "bsp-rak4631",
     feature = "bsp-t114",
-    feature = "bsp-solarnode"
+    feature = "bsp-solarnode",
+    feature = "bsp-xiaokit"
 )))]
-compile_error!("must enable exactly one of `bsp-rak4631`, `bsp-t114` or `bsp-solarnode`");
+compile_error!(
+    "must enable exactly one of `bsp-rak4631`, `bsp-t114`, `bsp-solarnode` or `bsp-xiaokit`"
+);
 
 pub mod announce;
 pub mod ble;

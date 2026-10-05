@@ -906,7 +906,10 @@ convert = "hex-to-uf2"
             flashing.softdevice_req("t114").unwrap().unwrap().as_str(),
             ">=7.0.1, <8.0.0"
         );
-        assert_eq!(catalogue.names(), vec!["rak4631", "solarnode", "t114"]);
+        assert_eq!(
+            catalogue.names(),
+            vec!["rak4631", "solarnode", "t114", "xiaokit"]
+        );
     }
 
     #[test]
@@ -985,9 +988,11 @@ convert = "hex-to-uf2"
     fn a_board_lnflash_does_not_know_is_named_along_with_the_ones_it_does() {
         // A bare XIAO nRF52840 is still not a board this tool knows, and is
         // not meant to become one: the Solar Node entry added in #233 is that
-        // module on one specific carrier, reached only through the USB ID our
-        // firmware publishes. A DIY XIAO with a radio wired somewhere else
-        // answers to nothing here (docs/src/firmware/boards.md).
+        // module on one specific carrier, and `xiaokit` is that same module
+        // with one specific radio stacked on it — both reached only through
+        // the USB IDs our own firmware publishes. A DIY XIAO with a radio
+        // wired somewhere else answers to nothing here
+        // (docs/src/firmware/boards.md).
         match catalogue().board("xiao_nrf52840") {
             Err(Error::UnknownBoard { wanted, available }) => {
                 assert_eq!(wanted, "xiao_nrf52840");
@@ -996,7 +1001,8 @@ convert = "hex-to-uf2"
                     vec![
                         "rak4631".to_string(),
                         "solarnode".to_string(),
-                        "t114".to_string()
+                        "t114".to_string(),
+                        "xiaokit".to_string()
                     ]
                 );
             }

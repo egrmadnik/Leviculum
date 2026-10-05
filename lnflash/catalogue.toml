@@ -169,3 +169,25 @@ docs/src/concepts/lnode-flashing.md, "Decoupled by construction"). Flash it \
 with `just flash-solarnode`, which is told the Board-ID explicitly by a person \
 who can see which board is on the bench.\
 """
+
+[board.xiaokit]
+family    = "nrf52840"
+# Our own firmware's application ID and product string "leviculum XiaoKit"
+# (leviculum-nrf/src/boards/xiaokit.rs). The kit's stock firmware is the
+# same XIAO-BOOT / 2886:* enumeration as the solar node's, and it is not
+# listed for the same reason: a control frame sent to a board running
+# Meshtastic is one nothing there understands.
+candidate_usb = ["1209:0004"]
+# If the solar node's Board-ID is decoupled from its product, this one's
+# IS the decoupling made flesh: the board is a bare XIAO module, so
+# nRF52840-SeeedXiao-v1 says nothing at all about which radio is stacked
+# on it — a Wio-SX1262 here, any third-party board there.
+not_flashable = """
+the Board-ID its bootloader publishes, nRF52840-SeeedXiao-v1, belongs to the \
+XIAO module, and this board is the bare module — the radio is a separate \
+board the user stacked on it, so the identifier says nothing about the \
+wiring at all (Codeberg #233; docs/src/concepts/lnode-flashing.md, \
+"Decoupled by construction"). Flash it with `just flash-xiaokit`, which is \
+told the Board-ID explicitly by a person who can see which kit is on the \
+bench.\
+"""

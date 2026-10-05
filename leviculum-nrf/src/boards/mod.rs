@@ -8,11 +8,13 @@
 //! files say so out loud: the RAK's antenna-switch pad exists on the
 //! schematic and must NOT be driven, because DIO2 owns it.
 //!
-//! The Wio-SX1262 on the solar node splits the job. DIO2 still steers
+//! The Wio-SX1262 splits the job, wherever it is mounted — on the solar
+//! node's carrier and on the plain XIAO kit alike. DIO2 still steers
 //! the transmit side, but the receive side is a host GPIO
-//! ([`solarnode::LoRaRxEnable`]) that has to be asserted for a listening
-//! window and released before a key-up — with both asserted at once the
-//! switch is in neither position and the transmit goes nowhere.
+//! ([`solarnode::LoRaRxEnable`], [`xiaokit::LoRaRxEnable`]) that has to
+//! be asserted for a listening window and released before a key-up —
+//! with both asserted at once the switch is in neither position and the
+//! transmit goes nowhere.
 //!
 //! So a board's front end is not one boolean any more. It is: DIO2,
 //! always; plus an OPTIONAL host-driven RX-enable pin, which a board
@@ -30,6 +32,7 @@
 pub mod rak4631;
 pub mod solarnode;
 pub mod t114;
+pub mod xiaokit;
 
 /// Runtime board metadata consumed by shared init code (USB, flash, LoRa).
 ///

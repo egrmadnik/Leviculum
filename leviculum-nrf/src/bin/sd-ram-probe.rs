@@ -36,6 +36,8 @@ use leviculum_nrf::boards::rak4631 as board;
 use leviculum_nrf::boards::solarnode as board;
 #[cfg(feature = "bsp-t114")]
 use leviculum_nrf::boards::t114 as board;
+#[cfg(feature = "bsp-xiaokit")]
+use leviculum_nrf::boards::xiaokit as board;
 
 /// One BLE configuration whose RAM requirement the probe measures.
 /// Everything not listed here matches the shipped `ble::init` config:

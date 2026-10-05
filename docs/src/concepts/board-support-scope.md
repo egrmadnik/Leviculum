@@ -84,6 +84,18 @@ Three conditions, any one of which is sufficient:
 3. **A peripheral is dangerous when mishandled.** A board with an
    external power amplifier needs its enable line driven correctly.
    Silence is not a safe default there, unlike a missing display.
+4. **What differs is the board's identity rather than a peripheral it
+   carries.** A carrier's additions degrade — a missing display probes
+   to nothing — but an LED wired with the opposite polarity does not
+   degrade, it lies: the panic blink a diagnostic relies on is invisible
+   or inverted. A USB ID has the same shape: two products sharing one
+   application PID answer control sessions as the same board, which is
+   not a degraded answer but a wrong one. The fourth build, `xiaokit`,
+   is this case and this case alone: its radio map is identical to the
+   solar node's — the same Wio-SX1262 on the same XIAO pads — and what
+   differs is that it has no carrier, so the module's own RGB (active
+   low, not the carrier's active high) and its own product identity are
+   what the image must state.
 
 Convenience, code tidiness, and "it would be cleaner to separate them"
 are not on this list.

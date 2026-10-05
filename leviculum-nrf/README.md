@@ -1,7 +1,7 @@
 # leviculum-nrf
 
 ## LNode firmware
-Firmware for the Heltec Mesh Node T114 (nRF52840 + SX1262) and the Wismesh Pocket V2. It turns these devices into a standalone Reticulum transport nodes (LNodes) that routes packets between USB serial, LoRa radio, and BLE. The transport engine is the same `leviculum-core` library that powers the Linux daemon, compiled for Cortex-M4F.
+Firmware for the Heltec Mesh Node T114 (nRF52840 + SX1262), the Wismesh Pocket V2, the SenseCAP Solar Node P1-Pro and the Seeed XIAO nRF52840 + Wio-SX1262 kit. It turns these devices into a standalone Reticulum transport nodes (LNodes) that routes packets between USB serial, LoRa radio, and BLE. The transport engine is the same `leviculum-core` library that powers the Linux daemon, compiled for Cortex-M4F.
 
 The firmware speaks the RNode LoRa framing protocol, so T114 and RNode devices interoperate on the same LoRa network. On the BLE side, it implements the Columba v2.2 protocol and can be used with the Columba Android app. On the host side, it connects to `lnsd` or `rnsd` over USB serial with HDLC framing.
 
