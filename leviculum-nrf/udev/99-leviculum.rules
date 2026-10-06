@@ -6,8 +6,10 @@
 #   Transport: interfaces 02 (comm) + 03 (data)
 #
 # Per-board USB PIDs:
-#   T114:    1209:0001 → /dev/leviculum-{debug,transport}[-SERIALNUM]
-#   RAK4631: 1209:0002 → /dev/leviculum-rak-{debug,transport}[-SERIALNUM]
+#   T114:      1209:0001 → /dev/leviculum-{debug,transport}[-SERIALNUM]
+#   RAK4631:   1209:0002 → /dev/leviculum-rak-{debug,transport}[-SERIALNUM]
+#   SolarNode: 1209:0003 → /dev/leviculum-solar-{debug,transport}[-SERIALNUM]
+#   XiaoKit:   1209:0004 → /dev/leviculum-xiao-{debug,transport}[-SERIALNUM]
 #
 # With multiple boards of the same kind, only the suffixed symlinks are
 # unique; the short ones land on whichever device udev sees first.
@@ -19,3 +21,11 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_USB_
 # RAK4631 (WisMesh Pocket V2)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0002", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="leviculum-rak-debug", SYMLINK+="leviculum-rak-debug-%s{serial}"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0002", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="leviculum-rak-transport", SYMLINK+="leviculum-rak-transport-%s{serial}"
+
+# SenseCAP Solar Node P1-Pro (XIAO nRF52840 + Wio-SX1262 on a carrier)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0003", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="leviculum-solar-debug", SYMLINK+="leviculum-solar-debug-%s{serial}"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0003", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="leviculum-solar-transport", SYMLINK+="leviculum-solar-transport-%s{serial}"
+
+# Seeed XIAO nRF52840 + Wio-SX1262 kit
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0004", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="leviculum-xiao-debug", SYMLINK+="leviculum-xiao-debug-%s{serial}"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0004", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="leviculum-xiao-transport", SYMLINK+="leviculum-xiao-transport-%s{serial}"
