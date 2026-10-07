@@ -3,9 +3,10 @@
 //!
 //! # What "class" means here, and why the split is drawn now
 //!
-//! This crate exists to serve four boards (Heltec V3, Heltec V4, two
-//! T-Beams) that differ in SoC family (ESP32 vs ESP32-S3), in radio part
-//! and in front end, but agree on everything the firmware does above the
+//! This crate exists to serve the ESP32-class boards (Heltec V3, Heltec
+//! V4, the T-Beams, the XIAO ESP32-S3 + Wio-SX1262 kit) that differ in
+//! SoC family (ESP32 vs ESP32-S3), in radio part and in front end, but
+//! agree on everything the firmware does above the
 //! pin: one `esp_hal::init`, one clock configuration, one USB serial the
 //! banner goes out of, one SX1262 command sequence set out of
 //! [`leviculum_core::sx126x`]. The split therefore runs exactly along
@@ -32,6 +33,7 @@
 //! net share one binary.
 
 pub mod heltec_v4;
+pub mod xiao_s3;
 
 /// Runtime board metadata consumed by the shared init code.
 ///

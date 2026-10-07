@@ -158,10 +158,12 @@ build-esp32:
     # repeated where it applies.
     RUSTDOCFLAGS="-D warnings" cargo doc --release --no-deps
     cargo build --release
-    espflash save-image --chip esp32s3 --flash-size 16mb \
-        target/xtensa-esp32s3-none-elf/release/heltec_v4 \
-        target/xtensa-esp32s3-none-elf/release/heltec_v4.bin
-    ls -l target/xtensa-esp32s3-none-elf/release/heltec_v4.bin
+    for bin in heltec_v4 xiao_s3; do
+        espflash save-image --chip esp32s3 --flash-size 16mb \
+            target/xtensa-esp32s3-none-elf/release/$bin \
+            target/xtensa-esp32s3-none-elf/release/$bin.bin
+    done
+    ls -l target/xtensa-esp32s3-none-elf/release/*.bin
 
 # Stack-frame gate for the firmware. The T114 stack grows down into the
 # SoftDevice RAM floor, so one oversized frame eats the whole margin and

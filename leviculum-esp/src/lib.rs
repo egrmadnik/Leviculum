@@ -1,10 +1,12 @@
 //! Reticulum firmware for ESP32-class boards.
 //!
 //! The sibling of `leviculum-nrf`, on the other half of the hardware we
-//! own: four boards (Heltec V3, Heltec V4, two T-Beams) that today run
-//! somebody else's firmware because we had none of our own for the
-//! family. The first target is the Heltec WiFi LoRa 32 V4 (ESP32-S3R2 +
-//! SX1262 + KCT8103L front end).
+//! own: the Heltec V3/V4 and T-Beam boards, and the XIAO ESP32-S3 +
+//! Wio-SX1262 kit, that today run somebody else's firmware because we had
+//! none of our own for the family. The first target is the Heltec WiFi
+//! LoRa 32 V4 (ESP32-S3R2 + SX1262 + KCT8103L front end); the second is
+//! the XIAO kit (ESP32-S3R8 + the same bare SX1262 the nRF kit mounts,
+//! on different pads).
 //!
 //! # What this crate is, at this step
 //!

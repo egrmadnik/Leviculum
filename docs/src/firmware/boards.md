@@ -303,13 +303,15 @@ volume by hand.
 **A different crate and a different stage.** Everything above is
 `leviculum-nrf` on nRF52840 and describes firmware that routes packets.
 The ESP32 class is `leviculum-esp`, and as of step 1 it is a skeleton:
-one binary, `heltec_v4`, built for `xtensa-esp32s3-none-elf`. The row
-below is in this table so the board is not invisible, not because it is
+two binaries, `heltec_v4` and `xiao_s3`, built for
+`xtensa-esp32s3-none-elf`. The rows
+below are in this table so the boards are not invisible, not because they are
 comparable to the families above.
 
 | Product | Level | Note |
 |---|---|---|
 | Heltec WiFi LoRa 32 V4 | **Skeleton** | Boots and identifies itself; no radio traffic, no interfaces, no transport |
+| Seeed XIAO ESP32-S3 + Wio-SX1262 | **Skeleton** | Same step-1 scope; radio nets land on the underside JTAG pads, not the headers |
 
 **What it can do after this step.** Bring the SoC up, open the USB
 Serial/JTAG port, and emit `[FW_BUILD] git_sha=<short> dirty=<true|false>
@@ -342,10 +344,36 @@ needs is **not established** — the schematic names the part only as
 > be read off the physical board before anything keys up. Step 1 does not
 > need the answer and does not pretend to have it.
 
+#### Seeed XIAO ESP32-S3 + Wio-SX1262 (`xiao_s3`)
+
+The ESP32 twin of the nRF kit: the same two-piece idea (a bare XIAO
+module plus a radio stacked on it), but the radio board is a *different*
+SKU — Seeed's kit page states the compatible Wio-SX1262 "can only be
+bought within the kit", because its B2B connector mates the four JTAG
+pads on the XIAO's underside and the FSPIWP pad, which a plain header
+footprint cannot reach.
+
+Radio pins, agreed by Seeed's kit pinout, the upstream Meshtastic
+`seeed_xiao_s3` variant and the RadioMesh Zephyr overlay: NSS `GPIO41`
+(MTDI), NRESET `GPIO42` (MTMS), BUSY `GPIO40` (MTDO), DIO1 `GPIO39`
+(MTCK), SCK `GPIO7` (D8), MISO `GPIO8` (D9), MOSI `GPIO9` (D10), and the
+host-side RX-enable `RF-SW` on `GPIO38` (FSPIWP) — the same front-end
+model as the nRF kit: DIO2 steers TX internally, a host GPIO enables the
+RX path. Unlike the V4 there is no PA (the 22 dBm limit is the air
+number) and the TCXO voltage is established: DIO3 at **1.8 V**, the value
+both the upstream variant and the nRF sibling state for the Wio module.
+The user LED is GPIO21, **active low** — upstream's `LED_POWER 48` is not
+the LED (GPIO48 is a camera pin on the Sense); the board file follows the
+module schematic. There is no battery divider (`BATTERY_PIN -1`
+upstream), and an L76K GNSS is an add-on on D6/D7 (`GPIO43`/`GPIO44`)
+with standby on D0 (`GPIO1`), same wiring convention as the nRF kit.
+
+(`leviculum-esp/src/boards/xiao_s3.rs`, `leviculum-esp/src/bin/xiao_s3.rs`.)
+
 There is no `lnflash` entry and no UF2: the ESP32-S3 has no mass-storage
-bootloader. The image is written with `espflash` over the same USB port
+bootloader. Images are written with `espflash` over the same USB port
 the banner comes out of, which is the SoC's own USB peripheral — there is
-no USB-to-UART bridge on this board.
+no USB-to-UART bridge on either ESP32 board.
 
 ### Not covered today
 
