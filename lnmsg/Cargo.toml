@@ -32,6 +32,9 @@ tracing.workspace = true
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
 
 [dev-dependencies]
+# `examples/thermostat_host.rs` — the host side of an LNode automation
+# device: THRM params out, THRS reports in.
+leviculum-automation = { path = "../leviculum-automation" }
 tempfile = "3"
 # `test-util` for the paused runtime clock: the send loop's timeouts are
 # measured on tokio's clock precisely so they can be tested without waiting.

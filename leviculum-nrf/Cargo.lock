@@ -914,6 +914,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "leviculum-automation"
+version = "0.10.0-dev"
+dependencies = [
+ "leviculum-core",
+ "leviculum-lxmf",
+]
+
+[[package]]
 name = "leviculum-battery-scale"
 version = "0.1.0"
 
@@ -1021,6 +1029,7 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.9.3",
  "leviculum-announce-policy",
+ "leviculum-automation",
  "leviculum-battery-scale",
  "leviculum-ble-tx",
  "leviculum-boot-count",

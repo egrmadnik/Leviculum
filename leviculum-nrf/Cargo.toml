@@ -31,6 +31,8 @@ leviculum-sd-policy = { path = "sd-policy" }
 # one 256-byte block rather than the reference's materialised workblock.
 # The image cost is sha2, which leviculum-core's crypto already links.
 leviculum-lxmf = { path = "../leviculum-lxmf", default-features = false, features = ["pow"] }
+# The portable automation-device core; `src/automation.rs` is its HAL here.
+leviculum-automation = { path = "../leviculum-automation" }
 # The propagation store adapters (#384 part 3): the synchronous
 # memory-mapped scan and the flush queues `src/pn.rs` drains through the
 # record-store task. Host-tested against regions the record log wrote.

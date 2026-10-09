@@ -49,6 +49,7 @@ compile_error!(
 );
 
 pub mod announce;
+pub mod automation;
 pub mod ble;
 pub mod boards;
 pub mod boot_count;

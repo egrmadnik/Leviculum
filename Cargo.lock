@@ -1946,6 +1946,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "leviculum-automation"
+version = "0.10.0-dev"
+dependencies = [
+ "leviculum-core",
+ "leviculum-lxmf",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "leviculum-ble-tx"
 version = "0.1.0"
 dependencies = [
@@ -2213,6 +2222,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "hex",
+ "leviculum-automation",
  "leviculum-core",
  "leviculum-lxmf",
  "leviculum-std",

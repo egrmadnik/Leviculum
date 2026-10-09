@@ -685,3 +685,7 @@ names the cells. For a collector, the ingress-clamp row — clamp,
 cursor safety, dedup, unhealed behaviour, Codeberg #239 — and the
 authorship-interop row are the ones an implementation must land
 green, with its implementing issue.
+
+Two sensors currently follow this checklist on `xiao_s3`: [Telemetry —
+BMV080 and BME690](sensors-telemetry.md) — which of their fields ride
+existing SIDs, which are new, and what the health flags mean.

@@ -22,6 +22,27 @@ description = "Reticulum firmware for ESP32-class boards (Heltec WiFi LoRa 32 V4
 [workspace]
 members = []
 
+[features]
+default = []
+# Real BMV080 measurements, not just the presence probe. Links Bosch's
+# pre-compiled `lib_bmv080.a`/`lib_postProcessor.a` — a licensed download,
+# never vendored: build.rs finds it via `BMV080_SDK` or the in-tree
+# docs/sensors drop. The feature is off by default so the crate still
+# builds for anyone without the SDK.
+bmv080-sdk = []
+# BME690 temperature/pressure/humidity/gas support. Unlike the BMV080
+# driver, Bosch's BME690 SensorAPI is BSD-3 source, so `build.rs`
+# compiles `bme69x.c` itself — with xtensa-esp32s3-elf-gcc, on PATH via
+# `export-esp.sh` — from the SDK root `BME690_SDK` or the in-tree
+# docs/sensors drop.
+bme690 = []
+
+[build-dependencies]
+# Always present, used only when `bme690` is on: an optional build-dep
+# would put `cc::Build` behind the feature, which is exactly backwards —
+# build.rs must compile regardless and decide at runtime.
+cc = "1"
+
 [dependencies]
 # The protocol core, and with it the SX1262 command/register sequences
 # this crate implements a bus for. `default-features = false` drops
@@ -44,6 +65,18 @@ esp-hal = { version = "1.2.1", features = ["esp32s3", "unstable"] }
 # Emits the `esp_app_desc` structure the second-stage bootloader reads.
 # Without it `espflash save-image` produces an image the ROM refuses.
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
+# Raw flash read/write for the PID config slot (`src/store.rs`) — the
+# config a remote node sets must survive reset and reflash.
+esp-storage = { version = "0.10", features = ["esp32s3"] }
+# LXMF message create/unpack/sign/verify — `no_std + alloc`, no I/O of
+# its own. The PID loop's config-in / status-out path builds real
+# `leviculum_lxmf::Message`s; the transport that carries them is the
+# same pending piece as everywhere else on this target.
+leviculum-lxmf = { path = "../leviculum-lxmf", default-features = false }
+# The portable automation-device core (config in flash, LXMF params/
+# report). `src/automation.rs` is its HAL on this chip; `bin/xiao_s3_auto`
+# is the wrapper.
+leviculum-automation = { path = "../leviculum-automation" }
 
 # The SX1262 buses are async, because `leviculum_core::sx126x`'s traits
 # are. `Spi<'_, Async>` implements `embedded_hal_async::spi::SpiBus`.
@@ -74,6 +107,10 @@ debug = true         # emit the DWARF in the first place
 [[bin]]
 name = "heltec_v4"
 path = "src/bin/heltec_v4.rs"
+
+[[bin]]
+name = "xiao_s3_auto"
+path = "src/bin/xiao_s3_auto.rs"
 
 [[bin]]
 name = "xiao_s3"

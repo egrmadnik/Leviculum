@@ -411,25 +411,24 @@ async fn main(spawner: Spawner) {
 
     // Radio profile: whatever a host last set and we persisted, else the
     // compiled default. A blank or corrupt page decodes to None.
-    let radio_cfg =
-        match leviculum_nrf::radio_store::load(xiaokit::CONFIG.radio_config_flash_page)
-            .and_then(leviculum_nrf::lora::RadioConfig::from_wire_config)
-        {
-            Some(cfg) => {
-                leviculum_nrf::log::log_fmt(
-                    "[RADIO] ",
-                    format_args!(
-                        "persisted freq={} bw={} sf={} cr={} pwr={}",
-                        cfg.frequency_hz, cfg.bw_hz, cfg.sf, cfg.cr_denom, cfg.tx_power_dbm
-                    ),
-                );
-                cfg
-            }
-            None => {
-                leviculum_nrf::log::log_fmt("[RADIO] ", format_args!("default eu_medium"));
-                leviculum_nrf::lora::RadioConfig::eu_medium()
-            }
-        };
+    let radio_cfg = match leviculum_nrf::radio_store::load(xiaokit::CONFIG.radio_config_flash_page)
+        .and_then(leviculum_nrf::lora::RadioConfig::from_wire_config)
+    {
+        Some(cfg) => {
+            leviculum_nrf::log::log_fmt(
+                "[RADIO] ",
+                format_args!(
+                    "persisted freq={} bw={} sf={} cr={} pwr={}",
+                    cfg.frequency_hz, cfg.bw_hz, cfg.sf, cfg.cr_denom, cfg.tx_power_dbm
+                ),
+            );
+            cfg
+        }
+        None => {
+            leviculum_nrf::log::log_fmt("[RADIO] ", format_args!("default eu_medium"));
+            leviculum_nrf::lora::RadioConfig::eu_medium()
+        }
+    };
     let lora_channels = leviculum_nrf::lora::channels();
     // `lora=off` means the radio stays down: the task that resets,
     // configures and keys the SX1262 is never spawned, so the chip is
@@ -675,8 +674,7 @@ async fn main(spawner: Spawner) {
         // hash-only record with the key once it is resolved (#370), so
         // after one successful resolution a reboot restores ready and
         // owes the immediate report.
-        if let Some(stored) = leviculum_nrf::telemetry::load(xiaokit::CONFIG.telemetry_flash_page)
-        {
+        if let Some(stored) = leviculum_nrf::telemetry::load(xiaokit::CONFIG.telemetry_flash_page) {
             reporter.apply_target(&mut node, stored);
         }
         // A persisted fixed position replaces the sensor from the first

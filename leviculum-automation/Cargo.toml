@@ -1,0 +1,17 @@
+[package]
+name = "leviculum-automation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Portable automation-device core for an LNode: config in flash, LXMF command/status with a remote node, hardware behind traits — host-testable, no_std + alloc"
+
+[features]
+default = []
+
+[dependencies]
+leviculum-core = { path = "../leviculum-core", default-features = false }
+leviculum-lxmf = { path = "../leviculum-lxmf", default-features = false }
+
+[dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }

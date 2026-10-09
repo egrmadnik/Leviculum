@@ -368,7 +368,58 @@ module schematic. There is no battery divider (`BATTERY_PIN -1`
 upstream), and an L76K GNSS is an add-on on D6/D7 (`GPIO43`/`GPIO44`)
 with standby on D0 (`GPIO1`), same wiring convention as the nRF kit.
 
-(`leviculum-esp/src/boards/xiao_s3.rs`, `leviculum-esp/src/bin/xiao_s3.rs`.)
+The header I2C pair (D4/D5 = `GPIO5`/`GPIO6`) is probed once at boot for
+two add-on sensors — a **BMV080** particulate sensor (SparkFun breakout,
+addr `0x57`) and a **BME690** environmental sensor (addr `0x76`/`0x77`) —
+and each answer is printed as `[BMV080]|[BME690] state=present|absent`,
+never assumed. Both sensors share the one `I2c` peripheral through a
+`SharedI2c` handle.
+
+With the `bmv080-sdk` cargo feature the binary links Bosch's
+`lib_bmv080.a` + `lib_postProcessor.a` (a **licensed download, never
+vendored** — `build.rs` finds it under `BMV080_SDK` or the local
+`docs/sensors/bmv080/bmv080-sdk-v11-2-0` drop; the license forbids
+redistribution, which is also why `docs/sensors/` is gitignored), opens
+the sensor, prints `[BMV080] state=up drv=<ver> id=<sensor-id>`, then
+duty-cycles a 10 s integration window every 60 s and logs each period's
+`pm1/pm2_5/pm10` (µg/m³) plus `obstructed`/`outofrange` flags.
+
+With the `bme690` cargo feature the binary instead *compiles* Bosch's
+`bme69x.c` SensorAPI itself — BSD-3 source, no blob — via
+`xtensa-esp32s3-elf-gcc` under `BME690_SDK` or
+`docs/sensors/bme690/BME690_SensorAPI`, runs `bme69x_init`, configures
+forced mode (×16 oversampling, 300 °C/100 ms heater) and logs
+`[BME690] t=<°C> p=<Pa> h=<%RH> gas=<Ω>` once per 5 s tick. Building it
+is `cargo build --release --bin xiao_s3 --features bmv080-sdk,bme690`;
+without the features the image stays probe-only.
+
+Beyond the I2C pair, two header pins run a **PID loop**: a DS18B20 on
+D1 (`GPIO2`, open-drain 1-Wire, external 4.7 kΩ pull-up) measures, and
+a valve output on D3 (`GPIO4`, high = open) is driven time-proportioned
+— the PID's 0..1 duty becomes the on-fraction of a `window_ms` window.
+D2 is skipped on purpose: it is GPIO3, a strapping pin, and an
+actuator that pulls it at reset writes itself into the boot mode. The
+tune (`sp/kp/ki/kd/sample_ms/window_ms`) arrives as a `PIDC` frame —
+inside a signed **LXMF message** addressed to the node's own
+`lxmf.delivery` destination over LoRa, or as `PID SET`/`PID IMPORT`/
+`PID LXMF` lines on the debug port — and persists to a dedicated flash
+sector at 7 MiB alongside the node's LXMF identity (`src/store.rs`).
+The loop answers with a `PIDS` status frame as the `content` of an LXMF
+message back to the remote — `src/pid_lxmf.rs` builds both directions
+with `leviculum_lxmf::Message`. The transport is `src/radio.rs` (the
+SX1262 on the fleet's `eu_medium` profile, continuous RX polled on
+DIO1) wired to `NodeCore`: inbound frames go `poll_rx` →
+`SplitReassembler` → `handle_packet`, whose `PacketReceived` events
+deliver the opportunistic LXMF payload to `decode_config_message`;
+outbound `TickOutput` actions become `build_lora_frames` + `transmit`.
+The debug-port commands remain as the bench path — same frames, no air.
+
+(`leviculum-esp/src/bmv080.rs`, `leviculum-esp/src/bme690.rs`,
+`leviculum-esp/src/ds18b20.rs`, `leviculum-esp/src/pid.rs`,
+`leviculum-esp/src/pid_lxmf.rs`, `leviculum-esp/src/radio.rs`,
+`leviculum-esp/src/store.rs`,
+`leviculum-esp/src/boards/xiao_s3.rs`, `leviculum-esp/src/bin/xiao_s3.rs`,
+`leviculum-esp/csrc/bme69x_glue.c`.)
 
 There is no `lnflash` entry and no UF2: the ESP32-S3 has no mass-storage
 bootloader. Images are written with `espflash` over the same USB port

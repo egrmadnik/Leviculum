@@ -179,6 +179,20 @@ pub type I2cSda<'d> = peripherals::GPIO5<'d>;
 /// I2C clock on the D5 header pin = GPIO6 (upstream `I2C_SCL`).
 pub type I2cScl<'d> = peripherals::GPIO6<'d>;
 
+// ---------------------------------------------------------------------
+// PID loop: DS18B20 + valve (D1/D2)
+// ---------------------------------------------------------------------
+
+/// 1-Wire data on the D1 header pin = GPIO2 — the DS18B20's DQ, with an
+/// external 4.7 kΩ pull-up. Open-drain in both directions; bit-banged,
+/// no peripheral involved.
+pub type OnewireData<'d> = peripherals::GPIO2<'d>;
+/// Valve drive on the D3 header pin = GPIO4 — high opens. D2 is skipped
+/// deliberately: it is GPIO3, a strapping pin, and a valve that pulls
+/// the line at reset would write itself into the boot mode. A relay
+/// coil or MOSFET gate is a board-externals problem, not this pin's.
+pub type Valve<'d> = peripherals::GPIO4<'d>;
+
 // USB is not a pin alias here either: the Type-C connector runs straight
 // to GPIO19 (D-) and GPIO20 (D+), the SoC's USB Serial/JTAG peripheral —
 // `lib.rs` opens it through `peripherals.USB_DEVICE`. Same topology as

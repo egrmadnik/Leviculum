@@ -118,6 +118,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f74872d07caf508b30a21f6836e7d7016a2eaf7d9ff4f48deaa58cd8a0407630"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -893,6 +903,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
+name = "find-msvc-tools"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1111,6 +1127,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "leviculum-automation"
+version = "0.10.0-dev"
+dependencies = [
+ "leviculum-core",
+ "leviculum-lxmf",
+]
+
+[[package]]
 name = "leviculum-core"
 version = "0.10.0-dev"
 dependencies = [
@@ -1129,17 +1153,30 @@ dependencies = [
 name = "leviculum-esp"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "embedded-alloc",
  "embedded-hal-async",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-storage",
+ "leviculum-automation",
  "leviculum-core",
  "leviculum-log-line",
+ "leviculum-lxmf",
 ]
 
 [[package]]
 name = "leviculum-log-line"
 version = "0.1.0"
+
+[[package]]
+name = "leviculum-lxmf"
+version = "0.10.0-dev"
+dependencies = [
+ "leviculum-core",
+ "rand_core 0.6.4",
+ "rmp",
+]
 
 [[package]]
 name = "libc"
@@ -1346,6 +1383,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1376b15f3ff160e9b1e8ea564ce427f2f6fcf77528cc0a8bf405cb476f9cea7"
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1448,6 +1494,12 @@ dependencies = [
  "cpufeatures 0.3.1",
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "shlex"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signature"

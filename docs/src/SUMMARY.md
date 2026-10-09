@@ -30,6 +30,7 @@
   - [lnmsg: the mailbox, and who you talk to](concepts/lnmsg-mailbox.md)
 - [Public channels over LXMF](concepts/public-channels.md)
 - [Telemetry](concepts/telemetry.md)
+  - [Telemetry — BMV080 and BME690](concepts/sensors-telemetry.md)
 - [An LXMF propagation node on a board](concepts/propagation-node-on-a-board.md)
 - [Evidence and honesty in testing](concepts/evidence-and-honesty.md)
 - [Checks that are actually checks](concepts/checks-and-citations.md)
@@ -60,6 +61,8 @@
 # Firmware (LNode)
 
 - [Supported boards](firmware/boards.md)
+- [Automation devices on an LNode](firmware/automation-device.md)
+  - [Testing an automation device](firmware/automation-testing.md)
 - [Building and flashing](firmware/flashing.md)
 - [Serial ports and udev](firmware/serial-ports.md)
 - [The USB control envelope](firmware/usb-control-envelope.md)

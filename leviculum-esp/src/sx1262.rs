@@ -143,6 +143,61 @@ impl<'d, SPI: SpiBus> Sx1262Bus<'d, SPI> {
         self.nss.set_high();
         result
     }
+
+    /// A two-write frame: header, then a payload too long for the fixed
+    /// command buffer — `WriteBuffer` (0x0E) is the only caller, and its
+    /// payload is a whole Reticulum packet.
+    async fn write_two(&mut self, header: &[u8], payload: &[u8]) -> Result<(), Error> {
+        self.wait_busy()?;
+        self.nss.set_low();
+        let result = async {
+            self.spi.write(header).await.map_err(|_| Error::Spi)?;
+            self.spi.write(payload).await.map_err(|_| Error::Spi)?;
+            self.spi.flush().await.map_err(|_| Error::Spi)
+        }
+        .await;
+        self.nss.set_high();
+        result
+    }
+
+    /// A command whose answer is a status byte followed by `out.len()`
+    /// data bytes — `GetIrqStatus`, `GetRxBufferStatus`,
+    /// `GetPacketStatus`, `GetStatus`. Returns the status byte; the data
+    /// lands in `out`.
+    pub async fn read_cmd(&mut self, opcode: u8, out: &mut [u8]) -> Result<u8, Error> {
+        let mut resp = [0u8; 32];
+        if out.len() + 1 > resp.len() {
+            return Err(Error::Frame);
+        }
+        self.transaction(&[opcode], &mut resp[..1 + out.len()])
+            .await?;
+        out.copy_from_slice(&resp[1..1 + out.len()]);
+        Ok(resp[0])
+    }
+
+    /// `WriteBuffer` (0x0E): offset byte, then the packet.
+    pub async fn write_payload(&mut self, data: &[u8]) -> Result<(), Error> {
+        self.write_two(&[0x0E, 0x00], data).await
+    }
+
+    /// `ReadBuffer` (0x1E): offset byte, status, then `out.len()` bytes.
+    pub async fn read_payload(&mut self, offset: u8, out: &mut [u8]) -> Result<(), Error> {
+        let mut resp = [0u8; 1];
+        self.wait_busy()?;
+        self.nss.set_low();
+        let r = async {
+            self.spi
+                .write(&[0x1E, offset])
+                .await
+                .map_err(|_| Error::Spi)?;
+            self.spi.read(&mut resp).await.map_err(|_| Error::Spi)?;
+            self.spi.read(out).await.map_err(|_| Error::Spi)?;
+            self.spi.flush().await.map_err(|_| Error::Spi)
+        }
+        .await;
+        self.nss.set_high();
+        r
+    }
 }
 
 impl<SPI: SpiBus> RegisterBus for Sx1262Bus<'_, SPI> {

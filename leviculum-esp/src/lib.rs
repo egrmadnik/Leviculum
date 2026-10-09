@@ -33,12 +33,22 @@
 
 #![no_std]
 
+pub mod automation;
+pub mod bme690;
+pub mod bmv080;
 pub mod boards;
+pub mod ds18b20;
+pub mod pid;
+pub mod pid_lxmf;
+pub mod radio;
+pub mod store;
 pub mod sx1262;
 
 use core::mem::MaybeUninit;
 
 use embedded_alloc::LlffHeap as Heap;
+#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
+use esp_hal::i2c::master::I2c;
 use esp_hal::{
     clock::CpuClock,
     peripherals::{Peripherals, USB_DEVICE},
@@ -83,10 +93,13 @@ static HEAP: Heap = Heap::empty();
 /// `leviculum-core` is `no_std + alloc`, and a binary that links `alloc`
 /// without a `#[global_allocator]` does not link at all — so the choice is
 /// not whether to have a heap but how big to say it is before anything has
-/// measured it. 64 KiB is a placeholder against the ESP32-S3's 512 KiB of
-/// internal SRAM, deliberately smaller than the nRF's 96 KiB so that the
-/// first thing to move it is a measurement rather than a copied number.
-pub const HEAP_SIZE: usize = 64 * 1024;
+/// measured it. 128 KiB is sized for the real consumer that arrived with
+/// the transport: `NodeCore` is boxed onto the heap (a >40 KiB struct
+/// the `build_boxed` path exists to keep off the stack), and the LXMF
+/// message paths allocate per packet on top of it. Still well under the
+/// ESP32-S3's 512 KiB SRAM, and the watermark that would raise it is
+/// runtime-measurable.
+pub const HEAP_SIZE: usize = 128 * 1024;
 
 /// Initialise the heap allocator. Called once by [`init`].
 fn init_heap() {
@@ -125,6 +138,53 @@ pub fn init() -> Peripherals {
 /// Milliseconds since boot, the stamp every log line carries.
 pub fn uptime_ms() -> u64 {
     Instant::now().duration_since_epoch().as_millis()
+}
+
+// ---------------------------------------------------------------------
+// The shared sensor bus
+// ---------------------------------------------------------------------
+
+/// A shareable handle to the sensor I2C bus.
+///
+/// Only exists when a sensor-driver feature is on — a probe-only build
+/// never shares the bus.
+///
+/// The add-on sensors this crate drives (BMV080, BME690, and whatever
+/// else lands on the Qwiic pair) can share the one `I2c` peripheral, and
+/// each is reached through C callbacks that carry a `void*` — a shared
+/// `&mut` cannot model that: two drivers would each need an outstanding
+/// exclusive borrow.
+///
+/// So the handle is a raw pointer, and the safety argument is
+/// topological: every driver call is synchronous on the single firmware
+/// thread, the FFI callback materialises a `&mut` only for the duration
+/// of one transfer, and no two `&mut`s to the bus are ever live at once.
+/// `SharedI2c` exists to keep that contract visible — it is `Copy`, so
+/// any number of drivers may hold it; exclusivity is temporal, not
+/// lexical.
+#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
+#[derive(Clone, Copy)]
+pub struct SharedI2c<'d> {
+    ptr: *mut I2c<'d, Blocking>,
+}
+
+#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
+impl<'d> SharedI2c<'d> {
+    /// Capture the bus. The caller hands over `&mut` once; afterwards the
+    /// bus may only be driven through `SharedI2c`s — code that keeps its
+    /// own `&mut` to the same `I2c` while drivers hold a `SharedI2c` has
+    /// broken the contract.
+    pub fn new(i2c: &mut I2c<'d, Blocking>) -> Self {
+        Self { ptr: i2c }
+    }
+
+    /// The raw pointer the C callback boundary threads back as `void*`.
+    ///
+    /// The pointer names the bus itself — a callback receives it and
+    /// reconstructs `&mut` for its transfer.
+    pub(crate) fn as_sercom(&self) -> *mut I2c<'d, Blocking> {
+        self.ptr
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -187,6 +247,24 @@ impl<'d> UsbLog<'d> {
             }
         }
         let _ = self.port.flush_tx_nb();
+    }
+
+    /// Drain whatever the host has sent into `buf` — command ingress on
+    /// the debug port (the `PID` lines `xiao_s3` parses). Returns the
+    /// byte count; 0 means nothing pending. Byte-at-a-time, nonblocking:
+    /// `read_byte` reports `WouldBlock` when the FIFO is empty.
+    pub fn read_bytes(&mut self, buf: &mut [u8]) -> usize {
+        let mut n = 0;
+        while n < buf.len() {
+            match self.port.read_byte() {
+                Ok(b) => {
+                    buf[n] = b;
+                    n += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        n
     }
 
     /// State what this image is and what board it thinks it is on.

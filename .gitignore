@@ -48,6 +48,15 @@ HOWTO.md
 # Generated docs (mdbook output)
 docs/book/
 
+# Vendor SDK drops live under docs/sensors/ but are never committed:
+# the Bosch BMV080 SDK is licensed binary blobs (lib_bmv080.a +
+# lib_postProcessor.a plus headers), and its license does not permit
+# redistribution. `BMV080_SDK` in leviculum-esp's build.rs points at it.
+# `*:Zone.Identifier` are Windows download markers that hitchhike along
+# when the SDK is dropped into WSL — they must stay uncommittable.
+docs/sensors/
+*:Zone.Identifier
+
 # IDE
 .idea/
 .vscode/

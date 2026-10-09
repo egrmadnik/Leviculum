@@ -6,6 +6,7 @@ members = [
     "lnomad",
     "lblogd",
     "leviculum-lxmf",
+    "leviculum-automation",
     "leviculum-lxmf-node",
     "leviculum-std",
     "leviculum-ffi",
