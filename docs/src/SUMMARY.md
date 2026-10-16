@@ -41,6 +41,7 @@
 # User Guide
 
 - [Installation](guide/installation.md)
+- [Running on WSL2](guide/wsl.md)
 - [Configuration reference](guide/configuration.md)
 - [Running lnsd](lnsd-quickstart.md)
 - [lnstest command-line utility](guide/lnstest.md)
