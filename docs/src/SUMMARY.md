@@ -42,6 +42,7 @@
 
 - [Installation](guide/installation.md)
 - [Running on WSL2](guide/wsl.md)
+- [Migrating to a Raspberry Pi](guide/raspberry-pi.md)
 - [Configuration reference](guide/configuration.md)
 - [Running lnsd](lnsd-quickstart.md)
 - [lnstest command-line utility](guide/lnstest.md)
