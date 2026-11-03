@@ -43,6 +43,10 @@ pub enum Decoded<P> {
         params: P,
         source: [u8; 16],
         verification: Verification,
+        /// The received message's timestamp — boards without a wall
+        /// clock reuse it for their reply (host clients reject
+        /// epoch-0 timestamps).
+        timestamp: f64,
     },
     /// An LXMF message, but its content is not a valid `P` frame.
     ///
@@ -75,6 +79,7 @@ pub fn decode_params<P: Params>(
             params,
             source: msg.source_hash,
             verification: msg.verification,
+            timestamp: msg.timestamp,
         },
         Err(_) => Decoded::NotParams,
     }
@@ -142,10 +147,12 @@ mod tests {
                 params,
                 source,
                 verification,
+                timestamp,
             } => {
                 assert_eq!(params, p);
                 assert_eq!(source, remote_dest);
                 assert_eq!(verification, Verification::Unverified);
+                assert_eq!(timestamp, 1.0);
             }
             _ => panic!("should decode"),
         }

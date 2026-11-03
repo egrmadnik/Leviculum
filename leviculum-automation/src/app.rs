@@ -137,6 +137,10 @@ pub struct App<D: Device> {
     target: Option<[u8; 16]>,
     next_sample_ms: u64,
     samples_since_report: u32,
+    /// Timestamp of the last accepted params message — reused for
+    /// reports when the board has no wall clock (host clients reject
+    /// epoch-0 timestamps).
+    last_rx_ts: Option<f64>,
 }
 
 impl<D: Device> App<D> {
@@ -168,6 +172,7 @@ impl<D: Device> App<D> {
             target,
             next_sample_ms: 0,
             samples_since_report: 0,
+            last_rx_ts: None,
         }
     }
 
@@ -248,9 +253,11 @@ impl<D: Device> App<D> {
                 params,
                 source,
                 verification,
+                timestamp,
             } => {
                 self.device.apply(params, now_ms);
                 self.target = Some(source);
+                self.last_rx_ts = Some(timestamp);
                 self.next_sample_ms = 0;
                 log.line(
                     "[AUTO] ",
@@ -284,7 +291,11 @@ impl<D: Device> App<D> {
         now_ms: u64,
     ) -> Option<Vec<u8>> {
         let target = self.target?;
-        lxmf::encode_report(identity, our_dest, &target, report, now_ms as f64 / 1000.0)
+        // A board without a wall clock stamps reports with the last
+        // received timestamp rather than a tiny uptime-as-epoch value
+        // that host clients refuse.
+        let ts = self.last_rx_ts.unwrap_or(now_ms as f64 / 1000.0);
+        lxmf::encode_report(identity, our_dest, &target, report, ts)
     }
 
     /// The persisted shape.
