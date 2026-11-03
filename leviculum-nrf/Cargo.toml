@@ -416,6 +416,14 @@ path = "src/bin/solarnode.rs"
 name = "xiaokit"
 path = "src/bin/xiaokit.rs"
 
+# LXMF echo node: sprejema sporočila in jih odgovori z "echo: <msg>".
+# Primer kako integrirati LxmfNode inbox v xiaokit firmware.
+# Gradnja: cargo build -p leviculum-nrf --release --features bsp-xiaokit --bin lxmf_echo
+[[bin]]
+name = "lxmf_echo"
+path = "src/bin/lxmf_echo.rs"
+required-features = ["bsp-xiaokit"]
+
 # Measurement instrument, not firmware: prints the S140's required app
 # RAM base for a series of BLE configs (#255 T2 central-role design).
 # No flash recipe references it; flashing it is a deliberate act.
