@@ -86,6 +86,25 @@ where
     }
 }
 
+/// An [`Io`] for devices with no inputs and no outputs — the
+/// [`crate::echo`] loopback and its kin. `sample` yields `()` and
+/// `drive` is a no-op; the cadence still runs, which is what produces
+/// reports:
+///
+/// ```ignore
+/// app.tick(&mut NoIo, &clock, &mut log);
+/// ```
+pub struct NoIo;
+
+impl<D> Io<D> for NoIo
+where
+    D: Device<Input = (), Output = ()>,
+{
+    fn sample(&mut self) -> D::Input {}
+
+    fn drive(&mut self, _out: &D::Output) {}
+}
+
 /// What a tick produced for the wrapper to act on.
 pub struct Tick<R> {
     /// A report is due — encode and send it if there is a target.

@@ -26,7 +26,7 @@
 //! | The device contract — `Params` in, `Report` out, `step` in between | [`device`] | the device author |
 //! | The app loop — load/apply config, sample cadence, status cadence, `Io` glue | [`app`] | this crate |
 //! | LXMF carrier — params out of a message, report into one | [`lxmf`] | this crate |
-//! | Worked devices — on/off thermostat; DI/DO/AI exerciser | [`thermostat`], [`iotest`] | examples |
+//! | Worked devices — on/off thermostat; DI/DO/AI exerciser; loopback | [`thermostat`], [`iotest`], [`echo`] | examples |
 //!
 //! The crate is `no_std + alloc` and has no I/O of its own: it hands out
 //! byte vectors and takes byte slices. The transport that moves them
@@ -58,12 +58,13 @@ extern crate alloc;
 
 pub mod app;
 pub mod device;
+pub mod echo;
 pub mod frame;
 pub mod hal;
 pub mod iotest;
 pub mod lxmf;
 pub mod thermostat;
 
-pub use app::{App, Inbound, Io, Tick};
+pub use app::{App, Inbound, Io, NoIo, Tick};
 pub use device::{Device, Output, Params, Report};
 pub use frame::{Buf, Cursor, FrameError};
