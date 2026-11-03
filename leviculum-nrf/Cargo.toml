@@ -424,6 +424,14 @@ name = "lxmf_echo"
 path = "src/bin/lxmf_echo.rs"
 required-features = ["bsp-xiaokit"]
 
+# Automation-crate echo node: App<Echo> + NoIo. Remote pošlje ECHC params
+# (≤32 B), board vrne iste bajte v ECHS reportu — LXMF loopback.
+# Gradnja: cargo build -p leviculum-nrf --release --features bsp-xiaokit --bin auto_echo
+[[bin]]
+name = "auto_echo"
+path = "src/bin/auto_echo.rs"
+required-features = ["bsp-xiaokit"]
+
 # Measurement instrument, not firmware: prints the S140's required app
 # RAM base for a series of BLE configs (#255 T2 central-role design).
 # No flash recipe references it; flashing it is a deliberate act.

@@ -129,6 +129,10 @@ as `None` → defaults + no target.
 |---|---|---|---|---|---|
 | `Thermostat` — on/off with hysteresis, failsafe on sensor loss | `THRM` | `THRS` | `Option<f32>` | `Output{on}` | [thermostat.md](thermostat.md) |
 | `IoTest` — 8 DI, 8 DO, 4 AI; mirror or remote-mask modes | `IOTC` | `IOTS` | `IoSample` | `IoCommand{dout}` | [io-test.md](io-test.md) |
+| `Echo` — LXMF loopback, no I/O at all | `ECHC` | `ECHS` | `()` | `()` | [echo.md](echo.md) |
+
+**Writing your own device** → [custom-device.md](custom-device.md) —
+the checklist, the contract, and the pitfalls in one page.
 
 ## Host-side consumers
 
