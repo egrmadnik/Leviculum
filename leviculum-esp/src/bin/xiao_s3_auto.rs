@@ -79,6 +79,10 @@ fn main() -> ! {
     // ---- 1. pins → HAL ------------------------------------------------
     let mut ow_pin = Flex::new(peripherals.GPIO2);
     ow_pin.apply_output_config(&OutputConfig::default().with_drive_mode(DriveMode::OpenDrain));
+    // The internal pull-up is a backstop, not the 1-Wire pull-up: ~45 kΩ
+    // is too weak for a long run, but it keeps a bare pad from reading a
+    // steady low that the driver would take for a presence pulse.
+    ow_pin.apply_input_config(&InputConfig::default().with_pull(Pull::Up));
     ow_pin.set_output_enable(true);
     ow_pin.set_input_enable(true);
     ow_pin.set_high();
@@ -113,7 +117,7 @@ fn main() -> ! {
             id
         }
     };
-    let our_dest = leviculum_automation::lxmf::delivery_hash(identity.clone()).unwrap_or([0; 16]);
+    let our_dest = leviculum_automation::lxmf::delivery_hash(&identity).unwrap_or([0; 16]);
     {
         let mut hex = [0u8; 32];
         to_hex(&our_dest, &mut hex);
@@ -205,11 +209,13 @@ fn main() -> ! {
                                     match app.on_message(
                                         data,
                                         &our_dest,
-                                        &mut cfg_store,
                                         clock_now(),
                                         &mut log,
+                                        None,
                                     ) {
-                                        Inbound::Applied { .. } => {}
+                                        Inbound::Applied { blob, .. } => {
+                                            cfg_store.save(&blob);
+                                        }
                                         Inbound::Rejected => {
                                             log.line("[AUTO] ", format_args!("params=rejected"))
                                         }
@@ -241,7 +247,11 @@ fn main() -> ! {
         }
 
         // The device.
-        let tick = app.tick(&mut sensor, &mut actuator, &clock, &mut log);
+        let tick = app.tick(
+            &mut (&mut sensor, &mut actuator),
+            &clock,
+            &mut log,
+        );
         if let Some(report) = tick.report {
             log.line(
                 "[AUTO] ",
@@ -322,9 +332,9 @@ fn handle_line<S: ConfigStore>(
         Some("LXMF") => {
             let mut data = [0u8; 512];
             let n = unhex(it.next().unwrap_or(""), &mut data);
-            let r = match app.on_message(&data[..n], our_dest, store, clock_now(), log) {
-                Inbound::Applied { persisted, .. } => {
-                    if persisted {
+            let r = match app.on_message(&data[..n], our_dest, clock_now(), log, None) {
+                Inbound::Applied { blob, .. } => {
+                    if store.save(&blob) {
                         "ok"
                     } else {
                         "ok-not-persisted"

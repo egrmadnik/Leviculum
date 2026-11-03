@@ -21,6 +21,39 @@ pub trait Actuator {
     fn set(&mut self, on: bool);
 }
 
+/// A bank of digital inputs, addressed by channel number.
+///
+/// Implemented once per board over whatever is really there — a row of
+/// GPIO pins, a port expander, an optocoupler bank. Channels the board
+/// does not populate return `None`, which the device treats as "not
+/// read", the same failsafe shape as [`Sensor`].
+pub trait DigitalIn {
+    /// `Some(level)` on a good read, `None` when the channel is absent
+    /// or unreadable this cycle.
+    fn read(&mut self, ch: u8) -> Option<bool>;
+}
+
+/// A bank of digital outputs, addressed by channel number.
+///
+/// Mirrors [`DigitalIn`]; a single [`Actuator`] covers the one-output
+/// regulator case, this covers a relay bank.
+pub trait DigitalOut {
+    fn set(&mut self, ch: u8, on: bool);
+}
+
+/// A bank of analog inputs in raw ADC counts.
+///
+/// Counts, not volts: the reference, resolution and scaling differ
+/// between boards, so the wire carries raw counts and the *report
+/// consumer* applies its own calibration. `None` per channel matches
+/// the [`DigitalIn`] convention — missing channel or failed
+/// conversion.
+pub trait AnalogIn {
+    /// Raw ADC counts for `ch` (12-bit on the kits), `None` on read
+    /// failure or an unpopulated channel.
+    fn read_counts(&mut self, ch: u8) -> Option<u16>;
+}
+
 /// Where the device's parameters live across a reboot.
 ///
 /// The app writes one opaque blob (the `Params` frame plus its report

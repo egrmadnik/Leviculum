@@ -1,11 +1,25 @@
 //! The device-agnostic main loop: boot from flash, sample on cadence,
-//! actuate, report, accept remote params, persist.
+//! actuate, report, accept remote params.
 //!
 //! `App<D>` owns the device and the report target and nothing else.
 //! It is driven, not driving: the wrapper calls [`App::tick`] from its
 //! main loop and [`App::on_message`] when the mesh delivers something,
 //! and acts on what comes back. That keeps the radio, the node and the
 //! peripherals in the wrapper — the one place they already are.
+//!
+//! # Sampling and driving — [`Io`]
+//!
+//! The app does not know the device's input and output types; the
+//! wrapper supplies them through [`Io`], one impl per board+device
+//! pair:
+//!
+//! ```ignore
+//! // A regulator: the (Sensor, Actuator) pair is already an Io impl —
+//! app.tick(&mut (&mut sensor, &mut actuator), &clock, &mut log);
+//!
+//! // A panel: IoBus bundles the three bank traits —
+//! app.tick(&mut IoBus { din: &mut di, dout: &mut do_, adc: &mut ai }, ..);
+//! ```
 //!
 //! # Flash blob
 //!
@@ -17,16 +31,60 @@
 //!
 //! `flag` = 0x54 when `target` is real. The Params frame carries its own
 //! CRC, so a corrupt sector reads as "defaults, no target".
+//!
+//! # Persistence is the wrapper's call
+//!
+//! [`App::on_message`] returns `Inbound::Applied { blob, .. }` and does
+//! **not** write the store itself. On a build where flash writes go
+//! through a task (the nRF SoftDevice owns NVMC), the wrapper hands
+//! `blob` to that task; on a bare build it calls `store.save(&blob)`.
+//! One API serves both.
 
 use alloc::vec::Vec;
 
 use leviculum_core::Identity;
+use leviculum_lxmf::message::Verification;
 
 use crate::device::{Device, Output, Params};
 use crate::hal::{Actuator, Clock, ConfigStore, Log, Sensor};
 use crate::lxmf;
 
 const TARGET_PRESENT: u8 = 0x54;
+
+/// Samples a device's input and applies its output.
+///
+/// One impl per board+device pair in the wrapper — the app asks for
+/// `D::Input`, hands back `D::Output`, and everything between (GPIO
+/// banks, 1-Wire probes, ADC channels) stays out of this crate.
+pub trait Io<D: Device> {
+    /// Produce one input sample for `Device::step`.
+    fn sample(&mut self) -> D::Input;
+    /// Apply one output command to the hardware.
+    fn drive(&mut self, out: &D::Output);
+}
+
+/// A ([`Sensor`], [`Actuator`]) pair drives any single-channel
+/// regulator — the shape every `Input = Option<f32>`,
+/// `Output = Output` device has. The tuple is a temporary of
+/// references, so nothing moves out of the wrapper's hands:
+///
+/// ```ignore
+/// app.tick(&mut (&mut sensor, &mut actuator), &clock, &mut log);
+/// ```
+impl<D, S, A> Io<D> for (&mut S, &mut A)
+where
+    D: Device<Input = Option<f32>, Output = Output>,
+    S: Sensor,
+    A: Actuator,
+{
+    fn sample(&mut self) -> D::Input {
+        self.0.read()
+    }
+
+    fn drive(&mut self, out: &D::Output) {
+        self.1.set(out.on);
+    }
+}
 
 /// What a tick produced for the wrapper to act on.
 pub struct Tick<R> {
@@ -36,8 +94,17 @@ pub struct Tick<R> {
 
 /// What an inbound delivery turned into.
 pub enum Inbound {
-    /// Params accepted and applied; the blob to persist.
-    Applied { blob: Vec<u8>, persisted: bool },
+    /// Params accepted and applied. `blob` is what to persist; `source`
+    /// is the sender's delivery hash — now also the report target, so
+    /// the node that tuned us is the node that hears back.
+    /// `verification` is what the signature check could say: it is
+    /// `Unverified` unless the wrapper passed a signer identity (an
+    /// allow-listed remote) via `signer`.
+    Applied {
+        blob: Vec<u8>,
+        source: [u8; 16],
+        verification: Verification,
+    },
     /// An LXMF message, but not a valid params frame (or refused values).
     Rejected,
     /// Not an LXMF message.
@@ -51,7 +118,6 @@ pub struct App<D: Device> {
     target: Option<[u8; 16]>,
     next_sample_ms: u64,
     samples_since_report: u32,
-    last_output: Output,
 }
 
 impl<D: Device> App<D> {
@@ -83,12 +149,15 @@ impl<D: Device> App<D> {
             target,
             next_sample_ms: 0,
             samples_since_report: 0,
-            last_output: Output { on: false },
         }
     }
 
     pub fn device(&self) -> &D {
         &self.device
+    }
+
+    pub fn device_mut(&mut self) -> &mut D {
+        &mut self.device
     }
 
     pub fn target(&self) -> Option<[u8; 16]> {
@@ -103,28 +172,31 @@ impl<D: Device> App<D> {
     }
 
     /// One pass of the main loop. Cheap when nothing is due.
-    pub fn tick<S: Sensor, A: Actuator, C: Clock, L: Log>(
+    ///
+    /// `io` samples the input and applies the output — a
+    /// `(&mut sensor, &mut actuator)` tuple for a regulator, or a
+    /// bank adaptor ([`crate::iotest::IoBus`]) for a panel.
+    pub fn tick<I: Io<D>, C: Clock, L: Log>(
         &mut self,
-        sensor: &mut S,
-        actuator: &mut A,
+        io: &mut I,
         clock: &C,
         log: &mut L,
     ) -> Tick<D::Report> {
         let now = clock.now_ms();
         if now < self.next_sample_ms {
             if let Some(out) = self.device.hold(now) {
-                self.drive(actuator, out);
+                io.drive(&out);
             }
             return Tick { report: None };
         }
         self.next_sample_ms = now + self.device.params().sample_ms() as u64;
 
-        let input = sensor.read();
-        let out = self.device.step(input, now);
-        self.drive(actuator, out);
-        if input.is_none() {
-            log.line("[AUTO] ", format_args!("input=none failsafe on={}", out.on));
+        let input = io.sample();
+        if !D::input_valid(&input) {
+            log.line("[AUTO] ", format_args!("input=invalid failsafe"));
         }
+        let out = self.device.step(input, now);
+        io.drive(&out);
 
         self.samples_since_report += 1;
         let every = self.device.params().report_every().max(1);
@@ -138,32 +210,45 @@ impl<D: Device> App<D> {
     }
 
     /// Handle an opportunistic LXMF delivery addressed to `our_dest`.
-    /// On `Applied`, the wrapper writes `blob` to its store (already
-    /// attempted here if a store is given) — the target becomes the
-    /// sender, so the node that tuned us is the node that hears back.
-    pub fn on_message<S: ConfigStore, L: Log>(
+    ///
+    /// On `Applied` the caller owns persistence — save `blob` through
+    /// whatever store the board has (directly, or through the flash
+    /// task on a SoftDevice build). `signer`, when the wrapper keeps
+    /// the remote's identity (allow-list), verifies the sender's
+    /// signature; `None` leaves `verification` as `Unverified`.
+    pub fn on_message<L: Log>(
         &mut self,
         on_air: &[u8],
         our_dest: &[u8; 16],
-        store: &mut S,
         now_ms: u64,
         log: &mut L,
+        signer: Option<&Identity>,
     ) -> Inbound {
-        match lxmf::decode_params::<D::Params>(on_air, our_dest) {
-            lxmf::Decoded::Params(p, src) => {
-                self.device.apply(p, now_ms);
-                self.target = Some(src);
+        match lxmf::decode_params::<D::Params>(on_air, our_dest, signer) {
+            lxmf::Decoded::Params {
+                params,
+                source,
+                verification,
+            } => {
+                self.device.apply(params, now_ms);
+                self.target = Some(source);
                 self.next_sample_ms = 0;
-                let blob = self.blob();
-                let persisted = store.save(&blob);
                 log.line(
                     "[AUTO] ",
                     format_args!(
-                        "params=applied from={:02x}{:02x}{:02x}{:02x} persisted={persisted}",
-                        src[0], src[1], src[2], src[3]
+                        "params=applied from={:02x}{:02x}{:02x}{:02x} verified={}",
+                        source[0],
+                        source[1],
+                        source[2],
+                        source[3],
+                        verification == Verification::Valid
                     ),
                 );
-                Inbound::Applied { blob, persisted }
+                Inbound::Applied {
+                    blob: self.blob(),
+                    source,
+                    verification,
+                }
             }
             lxmf::Decoded::NotParams => Inbound::Rejected,
             lxmf::Decoded::BadFrame => Inbound::Ignored,
@@ -181,13 +266,6 @@ impl<D: Device> App<D> {
     ) -> Option<Vec<u8>> {
         let target = self.target?;
         lxmf::encode_report(identity, our_dest, &target, report, now_ms as f64 / 1000.0)
-    }
-
-    fn drive<A: Actuator>(&mut self, actuator: &mut A, out: Output) {
-        if out != self.last_output {
-            self.last_output = out;
-        }
-        actuator.set(out.on);
     }
 
     /// The persisted shape.
@@ -283,7 +361,11 @@ mod tests {
         let mut app = App::boot(Thermostat::new(), &mut store, 0, &mut NoLog);
         let mut sensor = FakeSensor(Some(10.0)); // well below the 21 °C default
         let mut act = FakeActuator(false);
-        let t = app.tick(&mut sensor, &mut act, &FakeClock(0), &mut NoLog);
+        let t = app.tick(
+            &mut (&mut sensor, &mut act),
+            &FakeClock(0),
+            &mut NoLog,
+        );
         assert!(act.0, "cold → heater on");
         assert!(
             t.report.is_none(),
@@ -291,11 +373,19 @@ mod tests {
         );
         // Before the next sample is due: nothing changes.
         sensor.0 = None;
-        app.tick(&mut sensor, &mut act, &FakeClock(10), &mut NoLog);
+        app.tick(
+            &mut (&mut sensor, &mut act),
+            &FakeClock(10),
+            &mut NoLog,
+        );
         assert!(act.0);
         // Next sample with no reading → off.
         let period = ThermostatParams::DEFAULT.sample_ms as u64;
-        app.tick(&mut sensor, &mut act, &FakeClock(period), &mut NoLog);
+        app.tick(
+            &mut (&mut sensor, &mut act),
+            &FakeClock(period),
+            &mut NoLog,
+        );
         assert!(!act.0, "no reading → failsafe off");
     }
 }

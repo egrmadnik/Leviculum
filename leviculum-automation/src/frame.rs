@@ -79,7 +79,7 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 }
 
 /// Little-endian field cursor — the device's `read` uses it so a layout
-/// is a sequence of `take_f32()`/`take_u32()` and not index arithmetic.
+/// is a sequence of `f32()`/`u32()` calls and not index arithmetic.
 pub struct Cursor<'a> {
     bytes: &'a [u8],
 }
@@ -102,8 +102,16 @@ impl<'a> Cursor<'a> {
         self.take::<4>().map(f32::from_le_bytes)
     }
 
+    pub fn u64(&mut self) -> Result<u64, FrameError> {
+        self.take::<8>().map(u64::from_le_bytes)
+    }
+
     pub fn u32(&mut self) -> Result<u32, FrameError> {
         self.take::<4>().map(u32::from_le_bytes)
+    }
+
+    pub fn i32(&mut self) -> Result<i32, FrameError> {
+        self.take::<4>().map(i32::from_le_bytes)
     }
 
     pub fn u16(&mut self) -> Result<u16, FrameError> {
@@ -118,10 +126,72 @@ impl<'a> Cursor<'a> {
         self.take::<2>().map(i16::from_le_bytes)
     }
 
+    /// `n` raw bytes — fixed-size blobs (hashes, bitmasks, ADC banks).
+    pub fn bytes(&mut self, n: usize) -> Result<&'a [u8], FrameError> {
+        if self.bytes.len() < n {
+            return Err(FrameError::TooShort);
+        }
+        let (h, t) = self.bytes.split_at(n);
+        self.bytes = t;
+        Ok(h)
+    }
+
     /// Bytes not yet consumed — a decoder that wants to be strict
     /// checks this is empty.
     pub fn remaining(&self) -> usize {
         self.bytes.len()
+    }
+}
+
+/// Little-endian writer — the symmetric half of [`Cursor`], so a
+/// device's `write` is the same sequence of typed calls as its `read`.
+///
+/// ```ignore
+/// fn write(&self, out: &mut Buf<'_>) {
+///     out.f32(self.setpoint_c);
+///     out.u32(self.sample_ms);
+///     out.u8(self.flags);
+/// }
+/// ```
+pub struct Buf<'a> {
+    out: &'a mut Vec<u8>,
+}
+
+impl<'a> Buf<'a> {
+    pub fn new(out: &'a mut Vec<u8>) -> Self {
+        Self { out }
+    }
+
+    pub fn f32(&mut self, v: f32) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn u64(&mut self, v: u64) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn u32(&mut self, v: u32) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn i32(&mut self, v: i32) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn u16(&mut self, v: u16) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn i16(&mut self, v: i16) {
+        self.out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn u8(&mut self, v: u8) {
+        self.out.push(v);
+    }
+
+    pub fn bytes(&mut self, v: &[u8]) {
+        self.out.extend_from_slice(v);
     }
 }
 

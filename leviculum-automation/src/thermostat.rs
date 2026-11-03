@@ -9,10 +9,8 @@
 //! Replacing it with a PID, a pump scheduler or a counter is a new
 //! file implementing the same three traits — `App` does not change.
 
-use alloc::vec::Vec;
-
 use crate::device::{Device, Output, Params, Report};
-use crate::frame::{Cursor, FrameError};
+use crate::frame::{Buf, Cursor, FrameError};
 
 /// `THRM` v1 — 14 bytes of payload.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,11 +35,11 @@ impl Params for ThermostatParams {
         report_every: 6,
     };
 
-    fn write(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.setpoint_c.to_le_bytes());
-        out.extend_from_slice(&self.hysteresis_c.to_le_bytes());
-        out.extend_from_slice(&self.sample_ms.to_le_bytes());
-        out.extend_from_slice(&self.report_every.to_le_bytes());
+    fn write(&self, out: &mut Buf<'_>) {
+        out.f32(self.setpoint_c);
+        out.f32(self.hysteresis_c);
+        out.u32(self.sample_ms);
+        out.u16(self.report_every);
     }
 
     fn read(c: &mut Cursor<'_>) -> Result<Self, FrameError> {
@@ -71,7 +69,7 @@ impl Params for ThermostatParams {
     }
 }
 
-/// `THRS` v1 — 12 bytes of payload.
+/// `THRS` v2 — 13 bytes of payload (v1 packed uptime as 3 B).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThermostatReport {
     pub temperature_c: f32,
@@ -83,26 +81,25 @@ pub struct ThermostatReport {
 
 impl Report for ThermostatReport {
     const MAGIC: [u8; 4] = *b"THRS";
-    const VERSION: u8 = 1;
+    const VERSION: u8 = 2;
 
-    fn write(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.temperature_c.to_le_bytes());
-        out.extend_from_slice(&self.setpoint_c.to_le_bytes());
-        out.push((self.on as u8) | ((self.sensor_lost as u8) << 1));
-        out.extend_from_slice(&self.uptime_s.to_le_bytes()[..3]);
+    fn write(&self, out: &mut Buf<'_>) {
+        out.f32(self.temperature_c);
+        out.f32(self.setpoint_c);
+        out.u8((self.on as u8) | ((self.sensor_lost as u8) << 1));
+        out.u32(self.uptime_s);
     }
 
     fn read(c: &mut Cursor<'_>) -> Result<Self, FrameError> {
         let temperature_c = c.f32()?;
         let setpoint_c = c.f32()?;
         let flags = c.u8()?;
-        let (a, b, d) = (c.u8()?, c.u8()?, c.u8()?);
         Ok(Self {
             temperature_c,
             setpoint_c,
             on: flags & 1 != 0,
             sensor_lost: flags & 2 != 0,
-            uptime_s: u32::from_le_bytes([a, b, d, 0]),
+            uptime_s: c.u32()?,
         })
     }
 }
@@ -132,6 +129,8 @@ impl Thermostat {
 impl Device for Thermostat {
     type Params = ThermostatParams;
     type Report = ThermostatReport;
+    type Input = Option<f32>;
+    type Output = Output;
 
     fn params(&self) -> &ThermostatParams {
         &self.params
@@ -142,6 +141,10 @@ impl Device for Thermostat {
         // A new setpoint re-decides from scratch; carrying `on` across
         // would let an old band hold the heater through a new one.
         self.on = false;
+    }
+
+    fn input_valid(input: &Option<f32>) -> bool {
+        input.is_some()
     }
 
     fn step(&mut self, input: Option<f32>, _now_ms: u64) -> Output {

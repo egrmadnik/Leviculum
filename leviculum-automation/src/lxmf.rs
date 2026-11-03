@@ -16,21 +16,34 @@
 use alloc::vec::Vec;
 
 use leviculum_core::Identity;
-use leviculum_lxmf::{message::DeliveryMethod, LxmfNode, Message};
+use leviculum_lxmf::{
+    message::{DeliveryMethod, Verification},
+    LxmfNode, Message,
+};
 
 use crate::device::{Params, Report};
 
 /// This node's `lxmf.delivery` hash — the destination a remote
 /// addresses. Same derivation the nRF boards register.
-pub fn delivery_hash(identity: Identity) -> Option<[u8; 16]> {
-    let dest = LxmfNode::delivery_destination_without_inbox(identity).ok()?;
+pub fn delivery_hash(identity: &Identity) -> Option<[u8; 16]> {
+    let dest = LxmfNode::delivery_destination_without_inbox(identity.clone()).ok()?;
     Some(*dest.hash().as_bytes())
 }
 
 /// What an inbound delivery turned out to be.
 pub enum Decoded<P> {
-    /// Valid params and the sender's delivery hash.
-    Params(P, [u8; 16]),
+    /// Valid params, the sender's delivery hash, and what the signature
+    /// check could say.
+    ///
+    /// `verification` is `Unverified` unless `decode_params` was given
+    /// the sender's identity — a board without an identity store for
+    /// the remote cannot check the signature, and the field says so
+    /// honestly rather than implying a check that never ran.
+    Params {
+        params: P,
+        source: [u8; 16],
+        verification: Verification,
+    },
     /// An LXMF message, but its content is not a valid `P` frame.
     ///
     /// There is no "wrong destination" case here on purpose: in the
@@ -43,13 +56,26 @@ pub enum Decoded<P> {
 }
 
 /// Parse an opportunistic LXMF delivery into `P`.
-pub fn decode_params<P: Params>(on_air: &[u8], our_dest: &[u8; 16]) -> Decoded<P> {
-    let msg = match Message::unpack(on_air, Some(*our_dest), None, DeliveryMethod::Opportunistic) {
+///
+/// `signer`, when the caller has the sender's identity (an announce it
+/// kept, an allow-list), is checked against the message signature;
+/// with `None` the signature is not checked and the result carries
+/// `Verification::Unverified`.
+pub fn decode_params<P: Params>(
+    on_air: &[u8],
+    our_dest: &[u8; 16],
+    signer: Option<&Identity>,
+) -> Decoded<P> {
+    let msg = match Message::unpack(on_air, Some(*our_dest), signer, DeliveryMethod::Opportunistic) {
         Ok(m) => m,
         Err(_) => return Decoded::BadFrame,
     };
     match P::decode(&msg.content) {
-        Ok(p) => Decoded::Params(p, msg.source_hash),
+        Ok(params) => Decoded::Params {
+            params,
+            source: msg.source_hash,
+            verification: msg.verification,
+        },
         Err(_) => Decoded::NotParams,
     }
 }
@@ -89,8 +115,8 @@ mod tests {
     fn params_roundtrip_through_lxmf() {
         let remote = Identity::generate(&mut OsRng);
         let board = Identity::generate(&mut OsRng);
-        let remote_dest = delivery_hash(remote.clone()).unwrap();
-        let board_dest = delivery_hash(board.clone()).unwrap();
+        let remote_dest = delivery_hash(&remote).unwrap();
+        let board_dest = delivery_hash(&board).unwrap();
 
         let p = ThermostatParams {
             setpoint_c: 21.5,
@@ -111,10 +137,22 @@ mod tests {
         .unwrap();
         let on_air = msg.on_air().unwrap();
 
-        match decode_params::<ThermostatParams>(&on_air, &board_dest) {
-            Decoded::Params(got, src) => {
-                assert_eq!(got, p);
-                assert_eq!(src, remote_dest);
+        match decode_params::<ThermostatParams>(&on_air, &board_dest, None) {
+            Decoded::Params {
+                params,
+                source,
+                verification,
+            } => {
+                assert_eq!(params, p);
+                assert_eq!(source, remote_dest);
+                assert_eq!(verification, Verification::Unverified);
+            }
+            _ => panic!("should decode"),
+        }
+        // With the sender's identity supplied, the signature verifies.
+        match decode_params::<ThermostatParams>(&on_air, &board_dest, Some(&remote)) {
+            Decoded::Params { verification, .. } => {
+                assert_eq!(verification, Verification::Valid);
             }
             _ => panic!("should decode"),
         }
@@ -131,11 +169,11 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            decode_params::<ThermostatParams>(&other.on_air().unwrap(), &board_dest),
+            decode_params::<ThermostatParams>(&other.on_air().unwrap(), &board_dest, None),
             Decoded::NotParams
         ));
         assert!(matches!(
-            decode_params::<ThermostatParams>(b"garbage", &board_dest),
+            decode_params::<ThermostatParams>(b"garbage", &board_dest, None),
             Decoded::BadFrame
         ));
     }
@@ -143,7 +181,7 @@ mod tests {
     #[test]
     fn report_is_a_signed_message() {
         let board = Identity::generate(&mut OsRng);
-        let dest = delivery_hash(board.clone()).unwrap();
+        let dest = delivery_hash(&board).unwrap();
         let target = [7u8; 16];
         let r = ThermostatReport {
             temperature_c: 20.0,
