@@ -59,6 +59,14 @@ pub enum Decoded<P> {
     BadFrame,
 }
 
+/// Extract the sender's 16-byte delivery destination hash from the front
+/// of an opportunistic LXMF payload without unpacking it, so a wrapper
+/// with an identity store can look up the sender's [`Identity`] and pass
+/// it as `signer` to [`decode_params`] or [`crate::app::App::on_message`].
+pub fn peek_source(on_air: &[u8]) -> Option<[u8; 16]> {
+    on_air.get(..16)?.try_into().ok()
+}
+
 /// Parse an opportunistic LXMF delivery into `P`.
 ///
 /// `signer`, when the caller has the sender's identity (an announce it

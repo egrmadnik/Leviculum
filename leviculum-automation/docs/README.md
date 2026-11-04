@@ -23,8 +23,8 @@ remote node ◀──LXMF(content = Report frame)── │  Device D    │
 | Wire envelope — 4 B magic, version byte, payload, CRC32 — plus `Cursor`/`Buf` field codecs | `frame` | this crate |
 | The device contract — `Params` in, `Report` out, `step` in between | `device` | the device author |
 | The app loop — boot-from-flash, sample/report cadence, `Io` sampling glue | `app` | this crate |
-| LXMF carrier — params out of a message, report into one | `lxmf` | this crate |
-| Worked devices — thermostat, I/O exerciser | `thermostat`, `iotest` | examples |
+| LXMF carrier — params out of a message (`decode_params`, `peek_source`), report into one (`encode_report`) | `lxmf` | this crate |
+| Worked devices — thermostat, I/O exerciser, echo loopback | `thermostat`, `iotest`, `echo` | examples |
 
 The crate is `no_std + alloc` and has no I/O of its own: it hands out byte
 vectors and takes byte slices. The transport (NodeCore + radio) and every
@@ -48,12 +48,17 @@ trait Device {
 }
 ```
 
-- **`Params`** has a 4-byte frame magic, a version, `DEFAULT`, a wire
-  layout (`write`/`read` via `Buf`/`Cursor`), a `valid()` rule, and the
-  cadence (`sample_ms`, `report_every`). `Params::decode` refuses bad
-  envelopes, wrong versions, CRC errors and invalid values — a remote
-  can never half-apply a config.
-- **`Report`** is the same wire shape with no validity rule.
+- **`Params`** has a 4-byte frame magic, a version, an optional
+  `PAYLOAD_LEN` capacity hint (for single-allocation frame encoding via
+  `frame::encode_with`), `DEFAULT`, a wire layout (`write`/`read` via
+  `Buf`/`Cursor`), a `valid()` rule, and the cadence (`sample_ms`,
+  `report_every`). `report_every() == 0` means on-demand reporting only
+  (a single report immediately after new params are applied, with no
+  periodic reports when idle). `Params::decode` refuses bad envelopes,
+  wrong versions, CRC errors and invalid values — a remote can never
+  half-apply a config.
+- **`Report`** is the same wire shape (`MAGIC`, `VERSION`, `PAYLOAD_LEN`,
+  `write`/`read`) with no validity rule.
 - **`input_valid`** marks a sample unusable (dead sensor rail). The app
   logs a failsafe line; `step` still sees the value and decides.
 - **`hold`** runs between samples for outputs that decay or window on
@@ -72,7 +77,7 @@ trait Io<D: Device> {
 }
 ```
 
-Two impls ship in the crate:
+Three impls ship in the crate:
 
 - **`(&mut S, &mut A)`** — any `Sensor`+`Actuator` pair drives a
   single-channel regulator (`Input = Option<f32>`, `Output = Output`):
@@ -81,21 +86,27 @@ Two impls ship in the crate:
   ```
 - **`iotest::IoBus { din, dout, adc }`** — bundles the three bank traits
   for `App<IoTest>`.
+- **`NoIo`** — for devices with `Input = ()` and `Output = ()` (such as
+  `Echo`).
 
 ## Remote control flow
 
-1. A remote node (e.g. `lnmsg`'s `thermostat_host` example) resolves the
-   board's `lxmf.delivery` hash and sends an opportunistic LXMF message
+1. A remote node (e.g. `lnmsg`'s `thermostat_host` example or
+   `tests/echo-term.py`) resolves the board's `lxmf.delivery` hash and
+   sends an opportunistic LXMF message (`DeliveryMethod::Opportunistic`)
    whose **content is a `Params` frame**.
-2. `App::on_message(on_air, our_dest, now_ms, log, signer)` unpacks,
-   CRC/validity-checks and applies the params, **and sets the sender as
-   the report target** — the node that tunes the device is the node that
-   hears back.
+2. The wrapper can inspect the sender hash up front with
+   `lxmf::peek_source(on_air)` to look up a known `Identity` in
+   `node.storage()`. `App::on_message(on_air, our_dest, now_ms, log, signer)`
+   unpacks, verifies (when `signer` is supplied), CRC/validity-checks and
+   applies the params, **sets the sender as the report target**, and arms
+   an immediate report (`report_due = true`).
 3. On `Inbound::Applied { blob, .. }` the *wrapper* persists `blob` —
    on a SoftDevice build flash writes must go through a task; the app
    deliberately does not touch the store itself.
-4. Every `params.report_every`-th sample produces a `Report`; the
-   wrapper hands `app.report_message(...)` to the mesh.
+4. The very next `App::tick` emits a confirmation `Report` immediately
+   (and, when `params.report_every() > 0`, every `report_every`-th sample
+   thereafter); the wrapper hands `app.report_message(...)` to the mesh.
 
 ## Wire formats
 
@@ -140,13 +151,19 @@ the checklist, the contract, and the pitfalls in one page.
   prints reports against a live `lnsd`/`rnsd`.
 - `leviculum-automation/examples/io_test.rs` — the full io-test path on
   the host: `cargo run -p leviculum-automation --example io_test`.
+- `leviculum-automation/examples/echo_node.rs` — host-side `App<Echo>`
+  simulation: `cargo run -p leviculum-automation --example echo_node`.
+- `leviculum-automation/tests/echo-term.py` — live end-to-end test
+  script driving `lxmf-node` (`send_opportunistic`) against an
+  `auto_echo` LNode over LoRa/serial (`lnsd`).
 
 ## Security note
 
-Inbound signatures are *not* verified by default: a board typically has
-no copy of the remote's identity. `on_message`'s `signer` parameter
-verifies when the wrapper keeps one (an allow-list of operator
-identities from the `mgmt` path). `Inbound::Applied.verification`
-reports what the check could say — `Unverified` does not mean "bad",
-it means "not checked". Wrappers that can pin operator identities
-should; the CRC and `valid()` still gate everything else.
+Inbound signatures are verified whenever `on_message`'s `signer`
+parameter is `Some(&Identity)`. Wrappers with a Reticulum identity store
+ can pass
+`lxmf::peek_source(data).and_then(|src| node.storage().get_identity(&src))`
+(or an operator allow-list from the `mgmt` path). `Inbound::Applied.verification`
+reports what the check could say — `Unverified` when `signer` is `None`,
+`Valid` when verified. The frame CRC and `valid()` always gate the
+payload.

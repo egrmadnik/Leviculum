@@ -28,6 +28,7 @@ pub struct ThermostatParams {
 impl Params for ThermostatParams {
     const MAGIC: [u8; 4] = *b"THRM";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 14;
     const DEFAULT: Self = Self {
         setpoint_c: 21.0,
         hysteresis_c: 0.5,
@@ -82,6 +83,7 @@ pub struct ThermostatReport {
 impl Report for ThermostatReport {
     const MAGIC: [u8; 4] = *b"THRS";
     const VERSION: u8 = 2;
+    const PAYLOAD_LEN: usize = 13;
 
     fn write(&self, out: &mut Buf<'_>) {
         out.f32(self.temperature_c);

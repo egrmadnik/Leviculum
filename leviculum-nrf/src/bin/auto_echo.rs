@@ -33,15 +33,15 @@ use embassy_nrf::gpio::Level;
 use embassy_nrf::spim;
 use embassy_time::{Duration, Instant, Timer};
 
-use leviculum_automation::echo::Echo;
+use leviculum_automation::echo::{Echo, EchoReport};
 use leviculum_automation::hal::ConfigStore;
 use leviculum_automation::{App, Inbound, NoIo};
 use leviculum_core::embedded_storage::EmbeddedStorage;
 use leviculum_core::ifac::IfacConfig;
 use leviculum_core::node::{NodeCoreBuilder, NodeEvent};
-use leviculum_core::traits::Interface;
+use leviculum_core::traits::{Interface, Storage};
 use leviculum_core::transport::dispatch_actions;
-use leviculum_core::InterfaceId;
+use leviculum_core::{DestinationHash, InterfaceId, ProofStrategy};
 use leviculum_lxmf::LxmfNode;
 
 use leviculum_nrf::automation::{EmbassyClock as AutoClock, FirmwareLog};
@@ -272,13 +272,21 @@ async fn main(spawner: Spawner) {
     // --- 7. delivery destination (BREZ predala) -------------------------------
     //
     // `App<Echo>` sam razpakira opportunistični LXMF paket, zato ne rabimo
-    // LxmfNode inbox-a — registriramo samo `lxmf.delivery` destination.
-    let delivery_dest =
+    // LxmfNode inbox-a — registriramo samo `lxmf.delivery` destination z
+    // `ProofStrategy::App`, da potrdimo dostavo samo ko `on_message` sprejme
+    // veljaven `ECHC` okvir.
+    let mut delivery_dest =
         LxmfNode::delivery_destination_without_inbox(node.identity().clone())
             .expect("[ECHO] delivery destination build failed");
+    delivery_dest.set_proof_strategy(ProofStrategy::App);
     let delivery_hash = *delivery_dest.hash();
     node.register_destination(delivery_dest);
     let our_dest = *delivery_hash.as_bytes();
+    leviculum_nrf::identity::note_boot_identity(
+        *node.identity().hash(),
+        node.probe_dest_hash().map(|h| *h.as_bytes()),
+        Some(our_dest),
+    );
     {
         let dh = our_dest;
         log_critical!(
@@ -291,6 +299,7 @@ async fn main(spawner: Spawner) {
     }
 
     // --- 8. adapterji + App<Echo> --------------------------------------------
+    let serial_ctl_tx = serial.outgoing_tx;
     let mut serial_iface = EmbeddedInterface::new(serial.outgoing_tx);
     let mut lora_iface = LoRaInterface::new(lora_channels.outgoing_tx);
     let mut ble_iface = BleInterface::new(ble_channels.outgoing_tx);
@@ -307,6 +316,7 @@ async fn main(spawner: Spawner) {
     let mut alog = FirmwareLog;
     let mut app = App::boot(Echo::new(), &mut store, node.now_ms(), &mut alog);
     let auto_clock = AutoClock;
+    let mut pending_report: Option<(EchoReport, bool)> = None;
 
     let mut transport_stats = leviculum_nrf::transport_stats::Ticker::new();
     let mut heap_census = leviculum_nrf::heap_census::Ticker::new();
@@ -319,23 +329,66 @@ async fn main(spawner: Spawner) {
     macro_rules! auto_step {
         ($events:expr) => {{
             leviculum_nrf::events::log_events($events, node.now_ms());
+            let mut applied_packet = false;
             for ev in $events.iter() {
                 if let NodeEvent::AnnounceReceived { announce, .. } = ev {
                     leviculum_nrf::announce::note_announce_heard(
                         node.now_ms(),
                         announce.destination_hash().as_bytes(),
                     );
+                    let actions = announce_gate.periodic(&mut node, Some(&delivery_hash));
+                    if !actions.is_empty() {
+                        let mut ifaces: [&mut dyn Interface; 3] =
+                            [&mut serial_iface, &mut lora_iface, &mut ble_iface];
+                        let dispatched = dispatch_actions(&mut ifaces, actions, &ifac_configs);
+                        leviculum_nrf::dispatch::settle("announce-neighbour", &mut node, &dispatched);
+                    }
                 }
                 if let NodeEvent::PacketReceived { destination, data, .. } = ev {
                     if destination.as_bytes() == &our_dest {
-                        match app.on_message(data, &our_dest, node.now_ms(), &mut alog, None) {
+                        let signer = leviculum_automation::lxmf::peek_source(data)
+                            .and_then(|src| node.storage().get_identity(&src));
+                        match app.on_message(
+                            data,
+                            &our_dest,
+                            node.now_ms(),
+                            &mut alog,
+                            signer,
+                        ) {
                             Inbound::Applied { blob, .. } => {
                                 store.save(&blob);
+                                applied_packet = true;
                             }
                             Inbound::Rejected => {
                                 log_critical!("[ECHO] params rejected");
                             }
                             Inbound::Ignored => {}
+                        }
+                    }
+                }
+            }
+            if applied_packet {
+                for ev in $events.iter() {
+                    if let NodeEvent::PacketProofRequested {
+                        packet_hash,
+                        destination_hash,
+                        interface_index,
+                        peer,
+                    } = ev
+                    {
+                        if destination_hash.as_bytes() == &our_dest {
+                            if let Ok(out) = node.send_proof_on_peer(
+                                packet_hash,
+                                destination_hash,
+                                *interface_index,
+                                *peer,
+                            ) {
+                                let mut ifaces: [&mut dyn Interface; 3] =
+                                    [&mut serial_iface, &mut lora_iface, &mut ble_iface];
+                                let dispatched =
+                                    dispatch_actions(&mut ifaces, out.actions, &ifac_configs);
+                                leviculum_nrf::dispatch::settle("echo-proof", &mut node, &dispatched);
+                            }
                         }
                     }
                 }
@@ -370,8 +423,8 @@ async fn main(spawner: Spawner) {
                 Timer::at(deadline),
             ),
             Timer::after(Duration::from_millis(announce_wait_ms)),
-            core::future::pending::<()>(),
-            core::future::pending::<()>(),
+            serial.wall_time_rx.receive(),
+            serial.announce_rx.receive(),
         )
         .await;
 
@@ -379,6 +432,9 @@ async fn main(spawner: Spawner) {
         node.set_interface_online(1, lora_iface.is_online());
         node.set_interface_online(2, ble_iface.is_online());
         node.set_interface_peer_count(2, ble_iface.peer_count());
+        if leviculum_nrf::set_time_source(node.time_source()) {
+            log_critical!("[TIME_SOURCE] source={}", leviculum_nrf::time_source_str());
+        }
 
         match wake {
             Either4::Second(()) => {
@@ -389,6 +445,49 @@ async fn main(spawner: Spawner) {
                     let dispatched = dispatch_actions(&mut ifaces, actions, &ifac_configs);
                     leviculum_nrf::dispatch::settle("announce-periodic", &mut node, &dispatched);
                 }
+            }
+            Either4::Third(unix_secs) => {
+                use leviculum_core::envelope;
+                use leviculum_core::transport::TimeSource;
+                let answer = if node.set_wall_time_unix_secs(unix_secs, TimeSource::Host) {
+                    leviculum_nrf::set_time_source(TimeSource::Host);
+                    log_critical!("[TIME_SEED] source=host unix={}", unix_secs);
+                    log_critical!("[TIME_SOURCE] source={}", leviculum_nrf::time_source_str());
+                    envelope::encode_ack(envelope::TYPE_WALL_TIME)
+                } else {
+                    log_critical!("[TIME_SEED_REFUSED] source=host unix={}", unix_secs);
+                    envelope::encode_refusal(envelope::TYPE_WALL_TIME, envelope::REFUSE_VALUE)
+                };
+                let _ = serial_ctl_tx.try_send(answer);
+            }
+            Either4::Fourth(()) => {
+                use leviculum_core::envelope;
+                let answer = if !node.has_plausible_wall_clock() {
+                    log_critical!("[ANNOUNCE] withheld reason=no-clock");
+                    envelope::encode_refusal(envelope::TYPE_ANNOUNCE, envelope::REFUSE_NO_CLOCK)
+                } else {
+                    let app_data = leviculum_nrf::telemetry::announce_app_data(node.identity());
+                    match node.announce_destination(&delivery_hash, Some(&app_data)) {
+                        Ok(out) => {
+                            let mut ifaces: [&mut dyn Interface; 3] =
+                                [&mut serial_iface, &mut lora_iface, &mut ble_iface];
+                            let dispatched =
+                                dispatch_actions(&mut ifaces, out.actions, &ifac_configs);
+                            leviculum_nrf::dispatch::settle("announce-host", &mut node, &dispatched);
+                            let dh = delivery_hash.as_bytes();
+                            log_critical!(
+                                "[ANNOUNCE] sent dst={:02x}{:02x}{:02x}{:02x} reason=host",
+                                dh[0], dh[1], dh[2], dh[3]
+                            );
+                            envelope::encode_ack(envelope::TYPE_ANNOUNCE)
+                        }
+                        Err(_) => envelope::encode_refusal(
+                            envelope::TYPE_ANNOUNCE,
+                            envelope::REFUSE_BUSY,
+                        ),
+                    }
+                };
+                let _ = serial_ctl_tx.try_send(answer);
             }
             Either4::First(Either4::First(data)) => {
                 info!("SER RX {} bytes", data.len());
@@ -451,31 +550,53 @@ async fn main(spawner: Spawner) {
                 leviculum_nrf::dispatch::settle("timeout", &mut node, &dispatched);
                 auto_step!(&output.events);
             }
-            Either4::Third(()) | Either4::Fourth(()) => {}
         }
 
         // Echo tick: ko je report due → signed opportunistic LXMF reply.
         let tick = app.tick(&mut NoIo, &auto_clock, &mut alog);
         if let Some(report) = tick.report {
+            pending_report = Some((report, false));
+        }
+
+        if let Some((report, ref mut path_requested)) = pending_report {
             if let Some(target) = app.target() {
                 if let Some(on_air) =
                     app.report_message(&identity, &our_dest, &report, node.now_ms())
                 {
-                    match node.send_single_packet(
-                        &leviculum_core::DestinationHash::new(target),
-                        &on_air,
-                    ) {
+                    let target_hash = DestinationHash::new(target);
+                    match node.send_single_packet(&target_hash, &on_air) {
                         Ok((_, out)) => {
                             let mut ifaces: [&mut dyn Interface; 3] =
                                 [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                             let dispatched =
                                 dispatch_actions(&mut ifaces, out.actions, &ifac_configs);
                             leviculum_nrf::dispatch::settle("echo-tx", &mut node, &dispatched);
-                            log_critical!("[ECHO] reply sent dest={:02x}{:02x}{:02x}{:02x}",
-                                target[0], target[1], target[2], target[3]);
+                            log_critical!(
+                                "[ECHO] reply sent dest={:02x}{:02x}{:02x}{:02x}",
+                                target[0], target[1], target[2], target[3]
+                            );
+                            pending_report = None;
                         }
                         Err(_) => {
-                            log_critical!("[ECHO] reply failed (no path)");
+                            if !*path_requested {
+                                *path_requested = true;
+                                log_critical!(
+                                    "[ECHO] reply deferred (requesting path) dest={:02x}{:02x}{:02x}{:02x}",
+                                    target[0], target[1], target[2], target[3]
+                                );
+                                let out = node.request_path(&target_hash);
+                                if !out.actions.is_empty() {
+                                    let mut ifaces: [&mut dyn Interface; 3] =
+                                        [&mut serial_iface, &mut lora_iface, &mut ble_iface];
+                                    let dispatched =
+                                        dispatch_actions(&mut ifaces, out.actions, &ifac_configs);
+                                    leviculum_nrf::dispatch::settle(
+                                        "echo-path-req",
+                                        &mut node,
+                                        &dispatched,
+                                    );
+                                }
+                            }
                         }
                     }
                 }

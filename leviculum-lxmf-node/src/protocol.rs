@@ -41,6 +41,15 @@ pub enum Command {
         body: Vec<u8>,
         body_b64: String,
     },
+    /// `send_opportunistic <hex> <body_b64>` — single-packet opportunistic
+    /// LXMF delivery (`DeliveryMethod::Opportunistic`) for constrained targets
+    /// (`leviculum-automation` / nRF nodes) that register a linkless
+    /// `lxmf.delivery` destination.
+    SendOpportunistic {
+        peer: [u8; 16],
+        body: Vec<u8>,
+        body_b64: String,
+    },
     /// `send_telemetry <hex> <telemetry_field_hex>` — **ours; the Python
     /// helper has no twin for it**, exactly as it has none for the `pn_*`
     /// verbs. Additive, so the byte-compatibility contract at the top of
@@ -186,6 +195,21 @@ pub fn parse_command(line: &str) -> Result<Option<Command>, CommandError> {
             let body = b64_decode(body_b64)
                 .map_err(|e| CommandError::new(format!("invalid base64 body: {e}")))?;
             Ok(Some(Command::Send {
+                peer,
+                body,
+                body_b64: body_b64.to_string(),
+            }))
+        }
+        "send_opportunistic" => {
+            let (Some(hash), Some(body_b64)) = (parts.next(), parts.next()) else {
+                return Err(CommandError::new(
+                    "usage: send_opportunistic <hex> <body_b64>",
+                ));
+            };
+            let peer = parse_destination_hash(hash)?;
+            let body = b64_decode(body_b64)
+                .map_err(|e| CommandError::new(format!("invalid base64 body: {e}")))?;
+            Ok(Some(Command::SendOpportunistic {
                 peer,
                 body,
                 body_b64: body_b64.to_string(),
@@ -490,6 +514,14 @@ mod tests {
         assert_eq!(
             parse_command(&format!("send {hash} aGVsbG8=")),
             Ok(Some(Command::Send {
+                peer,
+                body: b"hello".to_vec(),
+                body_b64: "aGVsbG8=".to_string(),
+            }))
+        );
+        assert_eq!(
+            parse_command(&format!("send_opportunistic {hash} aGVsbG8=")),
+            Ok(Some(Command::SendOpportunistic {
                 peer,
                 body: b"hello".to_vec(),
                 body_b64: "aGVsbG8=".to_string(),

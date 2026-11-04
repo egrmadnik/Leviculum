@@ -137,6 +137,8 @@ pub struct App<D: Device> {
     target: Option<[u8; 16]>,
     next_sample_ms: u64,
     samples_since_report: u32,
+    /// Force a report on the next sample cycle after new params are applied.
+    report_due: bool,
     /// Timestamp of the last accepted params message — reused for
     /// reports when the board has no wall clock (host clients reject
     /// epoch-0 timestamps).
@@ -172,6 +174,7 @@ impl<D: Device> App<D> {
             target,
             next_sample_ms: 0,
             samples_since_report: 0,
+            report_due: false,
             last_rx_ts: None,
         }
     }
@@ -222,9 +225,10 @@ impl<D: Device> App<D> {
         let out = self.device.step(input, now);
         io.drive(&out);
 
-        self.samples_since_report += 1;
-        let every = self.device.params().report_every().max(1);
-        if self.samples_since_report >= every {
+        self.samples_since_report = self.samples_since_report.saturating_add(1);
+        let every = self.device.params().report_every();
+        if self.report_due || (every > 0 && self.samples_since_report >= every) {
+            self.report_due = false;
             self.samples_since_report = 0;
             return Tick {
                 report: Some(self.device.report(now)),
@@ -259,6 +263,7 @@ impl<D: Device> App<D> {
                 self.target = Some(source);
                 self.last_rx_ts = Some(timestamp);
                 self.next_sample_ms = 0;
+                self.report_due = true;
                 log.line(
                     "[AUTO] ",
                     format_args!(
@@ -300,7 +305,12 @@ impl<D: Device> App<D> {
 
     /// The persisted shape.
     pub fn blob(&self) -> Vec<u8> {
-        let mut b = self.device.params().encode();
+        let mut b = crate::frame::encode_with(
+            &D::Params::MAGIC,
+            D::Params::VERSION,
+            D::Params::PAYLOAD_LEN + 17,
+            |buf| self.device.params().write(buf),
+        );
         match self.target {
             Some(t) => {
                 b.extend_from_slice(&t);
@@ -417,5 +427,58 @@ mod tests {
             &mut NoLog,
         );
         assert!(!act.0, "no reading → failsafe off");
+    }
+
+    #[test]
+    fn echo_reports_once_per_applied_message() {
+        use crate::echo::{Echo, EchoParams};
+        use leviculum_lxmf::{message::DeliveryMethod, Message};
+        use rand_core::OsRng;
+
+        let remote = Identity::generate(&mut OsRng);
+        let board = Identity::generate(&mut OsRng);
+        let remote_dest = lxmf::delivery_hash(&remote).unwrap();
+        let board_dest = lxmf::delivery_hash(&board).unwrap();
+
+        let mut store = FakeStore(None);
+        let mut app = App::boot(Echo::new(), &mut store, 0, &mut NoLog);
+
+        // Idle ticks at boot produce no report for Echo (`report_every == 0`).
+        assert!(app.tick(&mut NoIo, &FakeClock(0), &mut NoLog).report.is_none());
+        assert!(app.tick(&mut NoIo, &FakeClock(1_000), &mut NoLog).report.is_none());
+
+        let msg = Message::create(
+            board_dest,
+            remote_dest,
+            &remote,
+            100.0,
+            Vec::new(),
+            EchoParams::of(b"ping").encode(),
+            Vec::new(),
+            DeliveryMethod::Opportunistic,
+        )
+        .unwrap()
+        .on_air()
+        .unwrap();
+
+        assert_eq!(lxmf::peek_source(&msg), Some(remote_dest));
+        assert!(matches!(
+            app.on_message(&msg, &board_dest, 1_500, &mut NoLog, Some(&remote)),
+            Inbound::Applied {
+                verification: Verification::Valid,
+                ..
+            }
+        ));
+
+        // Next tick emits the single echo reply immediately:
+        let r = app
+            .tick(&mut NoIo, &FakeClock(1_500), &mut NoLog)
+            .report
+            .expect("reply due after on_message");
+        assert_eq!(r.content(), b"ping");
+
+        // Subsequent idle ticks do not spam duplicate echo reports:
+        assert!(app.tick(&mut NoIo, &FakeClock(2_500), &mut NoLog).report.is_none());
+        assert!(app.tick(&mut NoIo, &FakeClock(3_500), &mut NoLog).report.is_none());
     }
 }

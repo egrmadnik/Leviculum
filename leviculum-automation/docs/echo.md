@@ -36,8 +36,8 @@ own observable:
 | 1 | 32 B | `payload` | only `payload[..len]` is real |
 
 `sample_ms` and `report_every` are not fields — the echo has no
-tunables; `Params` reports `sample_ms = 1000`, `report_every = 1` as
-constants so a reply leaves promptly.
+tunables; `Params` reports `sample_ms = 1000`, `report_every = 0`
+(report on-demand when params are applied, no periodic reports when idle).
 
 ### `ECHS` v1 — report, 41-byte payload
 
@@ -94,24 +94,65 @@ Differences from `lxmf_echo` (the raw-LXMF echo):
 
 - no `LxmfNode` inbox — the app unpacks the opportunistic packet itself,
   so the delivery destination registers *without* an inbox
+  (`accepts_links = false`, `ProofStrategy::App`, proving delivery via
+  `node.send_proof_on_peer` only when `on_message` returns
+  `Inbound::Applied`)
+- sender signature verification via
+  `lxmf::peek_source(data).and_then(|src| node.storage().get_identity(&src))`
 - echo logic lives in `leviculum_automation::echo`, not in the binary
 - the params blob is a RAM store — `ECHC` is data to echo, not config
   worth flash wear (and on a SoftDevice build loop NVMC writes are
   illegal anyway)
+- if the return path to the sender is not yet in the path table when the
+  `ECHS` report is ready, `auto_echo` queues `pending_report` and calls
+  `node.request_path(&target_hash)` so the reply is sent as soon as the
+  path resolves
 
 Serial output on delivery:
 
 ```text
-[ECHO] delivery_hash=1ef5d2e9a58ef444f16740b806aa2080
-[AUTO] params=applied from=e03d0357 verified=false
-[ECHO] reply sent dest=e03d0357
+[ECHO] delivery_hash=85c390a37c34762a3af3b2024aa63fed
+[AUTO] params=applied from=e0a5a22a verified=true
+[ECHO] reply sent dest=e0a5a22a
 ```
+
+## Live hardware test — `tests/echo-term.py`
+
+`leviculum-automation/tests/echo-term.py` tests the full round trip from
+a host running `lnsd` (either the system `lnsd` service on
+`instance_name = default` or `./run-lnsd.sh`) via `lxmf-node`:
+
+```sh
+cd leviculum-automation/tests
+python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed "ojla"
+```
+
+```text
+Čakam na XIAO announce (resetirajte če treba) ...
+  peer najden
+→ ECHC b'ojla'  (42 B frame)
+← ECHS b'ojla'  applied=5 uptime=878s
+   echo OK
+```
+
+How `echo-term.py` works:
+1. Spawns `lxmf-node --config lnsd-config echo-term` and waits for
+   `EVENT lxmf_ready`.
+2. Sends `announce` and `wait_for_peer <delivery_hash> 60` (which
+   immediately emits a Reticulum `PATH_REQUEST` for `<delivery_hash>` and
+   re-announces every 5 s so a freshly reset XIAO seeds its wall clock
+   and learns the return route to the host).
+3. Encodes the payload into a 42-byte `ECHC` frame and sends it as a
+   single-packet opportunistic LXMF message via
+   `send_opportunistic <delivery_hash> <b64>`.
+4. Waits for `EVENT lxmf_msg_received`, base64-decodes `body_b64`, and
+   verifies the 50-byte `ECHS` frame (`content`, `applied`, `uptime_s`).
 
 ## Failure modes
 
 | Symptom | Meaning |
 |---|---|
 | `params rejected` | `ECHC` frame corrupt or `len > 32` |
-| `reply failed (no path)` | target learned but path gone before the report left |
+| `reply deferred (requesting path)` | target path missing; `node.request_path` issued and reply queued until path resolves |
 | `applied` jumps >1 per message | board rebooted (boot-default apply counts) |
 | report with empty `len` | no params received yet — boot default |

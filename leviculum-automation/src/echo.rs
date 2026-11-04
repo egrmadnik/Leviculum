@@ -52,6 +52,7 @@ impl EchoParams {
 impl Params for EchoParams {
     const MAGIC: [u8; 4] = *b"ECHC";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 1 + ECHO_MAX;
     const DEFAULT: Self = Self {
         len: 0,
         payload: [0; ECHO_MAX],
@@ -80,9 +81,10 @@ impl Params for EchoParams {
         1_000
     }
 
-    /// Every applied params set wants its echo out promptly.
+    /// Report only when new params are applied (`0` = on-demand only,
+    /// never spam periodic reports when idle).
     fn report_every(&self) -> u32 {
-        1
+        0
     }
 }
 
@@ -112,6 +114,7 @@ impl EchoReport {
 impl Report for EchoReport {
     const MAGIC: [u8; 4] = *b"ECHS";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 1 + ECHO_MAX + 4 + 4;
 
     fn write(&self, out: &mut Buf<'_>) {
         out.u8(self.len);

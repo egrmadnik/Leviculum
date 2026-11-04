@@ -65,6 +65,7 @@ pub struct IoTestParams {
 impl Params for IoTestParams {
     const MAGIC: [u8; 4] = *b"IOTC";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 8;
     const DEFAULT: Self = Self {
         flags: FLAG_MIRROR,
         dout_mask: 0,
@@ -147,6 +148,7 @@ pub struct IoTestReport {
 impl Report for IoTestReport {
     const MAGIC: [u8; 4] = *b"IOTS";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 15;
 
     fn write(&self, out: &mut Buf<'_>) {
         out.u8(self.din);

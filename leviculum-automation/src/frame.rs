@@ -35,10 +35,19 @@ pub const OVERHEAD: usize = 4 + 1 + 4;
 
 /// Wrap `payload` in the envelope.
 pub fn encode(magic: &[u8; 4], version: u8, payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(OVERHEAD + payload.len());
+    encode_with(magic, version, payload.len(), |buf| buf.bytes(payload))
+}
+
+/// Write a payload directly into a single pre-sized frame allocation and
+/// seal it with the envelope header and trailing CRC32.
+pub fn encode_with<F>(magic: &[u8; 4], version: u8, payload_capacity: usize, write: F) -> Vec<u8>
+where
+    F: FnOnce(&mut Buf<'_>),
+{
+    let mut out = Vec::with_capacity(OVERHEAD + payload_capacity);
     out.extend_from_slice(magic);
     out.push(version);
-    out.extend_from_slice(payload);
+    write(&mut Buf::new(&mut out));
     let crc = crc32(&out);
     out.extend_from_slice(&crc.to_le_bytes());
     out
@@ -62,18 +71,35 @@ pub fn decode<'a>(bytes: &'a [u8], magic: &[u8; 4], version: u8) -> Result<&'a [
     Ok(&body[5..])
 }
 
-/// CRC-32 (IEEE, reflected 0xEDB88320), table-less.
-pub fn crc32(bytes: &[u8]) -> u32 {
+/// Half-byte lookup table (64 B in `.rodata`) for IEEE CRC-32 (0xEDB88320).
+const CRC32_NIBBLE: [u32; 16] = [
+    0x0000_0000,
+    0x1DB7_1064,
+    0x3B6E_20C8,
+    0x26D9_30AC,
+    0x76DC_4190,
+    0x6B6B_51F4,
+    0x4DB2_6158,
+    0x5005_713C,
+    0xEDB8_8320,
+    0xF00F_9344,
+    0xD6D6_A3E8,
+    0xCB61_B38C,
+    0x9B64_C2B0,
+    0x86D3_D2D4,
+    0xA00A_E278,
+    0xBDBDF21C,
+];
+
+/// CRC-32 (IEEE, reflected 0xEDB88320), nibble-at-a-time.
+pub const fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = !0u32;
-    for &b in bytes {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xEDB8_8320
-            } else {
-                crc >> 1
-            };
-        }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        crc = (crc >> 4) ^ CRC32_NIBBLE[((crc as u8 ^ b) & 0x0F) as usize];
+        crc = (crc >> 4) ^ CRC32_NIBBLE[((crc as u8 ^ (b >> 4)) & 0x0F) as usize];
+        i += 1;
     }
     !crc
 }

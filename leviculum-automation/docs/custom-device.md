@@ -53,6 +53,7 @@ read with `Cursor` — the same sequence both ways:
 impl Params for PumpParams {
     const MAGIC: [u8; 4] = *b"PUMP";
     const VERSION: u8 = 1;
+    const PAYLOAD_LEN: usize = 9; // optional hint for single-allocation encode()
     const DEFAULT: Self = Self { /* what runs when flash is empty */ };
 
     fn write(&self, out: &mut Buf<'_>) {
@@ -86,8 +87,11 @@ fn valid(&self) -> bool {
 ```
 
 Also define `sample_ms()` (how often `step` runs) and `report_every()`
-(report per N samples) on `Params` — remote-tunable cadence, not
-constants, unless the device truly has nothing to tune (see `Echo`).
+(report per N samples, or `0` for on-demand reporting only when new
+params are applied) on `Params` — remote-tunable cadence, not constants,
+unless the device truly has nothing to tune (see `Echo`). Note that
+`App::on_message` always forces one immediate report on the next `tick`
+after applying new params, even when `report_every() > 1`.
 
 ### 4. `apply()` — reset accumulated state
 
@@ -139,7 +143,9 @@ Whatever `D` is, the firmware loop stays:
 ```rust
 let mut app = App::boot(MyDevice::new(), &mut store, now_ms, &mut log);
 loop {
-    // inbound: app.on_message(bytes, &our_dest, now, &mut log, signer)
+    // inbound: let signer = lxmf::peek_source(bytes)
+    //              .and_then(|src| node.storage().get_identity(&src));
+    //          app.on_message(bytes, &our_dest, now, &mut log, signer)
     //          → Inbound::Applied { blob, .. } → persist blob your way
     // every pass: app.tick(&mut io, &clock, &mut log)
     //          → tick.report → app.report_message(...) → mesh

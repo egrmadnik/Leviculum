@@ -27,6 +27,8 @@ pub trait Params: Copy {
     const MAGIC: [u8; 4];
     /// Layout version; bump when `write`/`read` change.
     const VERSION: u8;
+    /// Expected payload size in bytes (hint for single-allocation `encode`).
+    const PAYLOAD_LEN: usize = 0;
 
     /// Compiled-in defaults — what runs when flash is empty.
     const DEFAULT: Self;
@@ -41,16 +43,17 @@ pub trait Params: Copy {
     /// How often the device wants `step` called.
     fn sample_ms(&self) -> u32;
 
-    /// Report every N samples. Default: every sample.
+    /// Report every N samples (`0` = report only when new params are applied,
+    /// no periodic reports). Default: every sample (`1`).
     fn report_every(&self) -> u32 {
         1
     }
 
     /// Full frame: envelope + fields.
     fn encode(&self) -> Vec<u8> {
-        let mut payload = Vec::new();
-        self.write(&mut Buf::new(&mut payload));
-        frame::encode(&Self::MAGIC, Self::VERSION, &payload)
+        frame::encode_with(&Self::MAGIC, Self::VERSION, Self::PAYLOAD_LEN, |buf| {
+            self.write(buf)
+        })
     }
 
     /// Envelope check, field read, validity — any failure is a refusal,
@@ -71,14 +74,16 @@ pub trait Params: Copy {
 pub trait Report: Sized {
     const MAGIC: [u8; 4];
     const VERSION: u8;
+    /// Expected payload size in bytes (hint for single-allocation `encode`).
+    const PAYLOAD_LEN: usize = 0;
 
     fn write(&self, out: &mut Buf<'_>);
     fn read(c: &mut Cursor<'_>) -> Result<Self, FrameError>;
 
     fn encode(&self) -> Vec<u8> {
-        let mut payload = Vec::new();
-        self.write(&mut Buf::new(&mut payload));
-        frame::encode(&Self::MAGIC, Self::VERSION, &payload)
+        frame::encode_with(&Self::MAGIC, Self::VERSION, Self::PAYLOAD_LEN, |buf| {
+            self.write(buf)
+        })
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, FrameError> {

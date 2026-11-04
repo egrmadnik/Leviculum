@@ -821,6 +821,16 @@ impl LxmfHelperProcessor {
                 SendRequest::chat(peer, body, body_b64, DeliveryMethod::Direct),
                 out,
             ),
+            Command::SendOpportunistic {
+                peer,
+                body,
+                body_b64,
+            } => self.send(
+                ready,
+                core,
+                SendRequest::chat(peer, body, body_b64, DeliveryMethod::Opportunistic),
+                out,
+            ),
             Command::SendTelemetry { peer, telemetry } => {
                 self.send(ready, core, SendRequest::telemetry(peer, &telemetry), out)
             }
@@ -1225,7 +1235,7 @@ impl LxmfHelperProcessor {
                     .event("lxmf_wait_for_peer_ok", &[("peer", hex_encode(&wait.peer))]);
                 continue;
             }
-            if identity_known && !wait.path_requested {
+            if !wait.path_requested {
                 // Through `absorb` rather than merged straight into `out`:
                 // `request_path` ends in `process_events_and_actions`, so its
                 // output can carry events, and every other core call made from

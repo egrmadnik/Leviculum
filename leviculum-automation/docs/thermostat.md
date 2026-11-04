@@ -65,7 +65,9 @@ nRF52840 wrapper: `leviculum-nrf/src/automation.rs` — `GpioActuator`,
 ```rust
 let mut app = App::boot(Thermostat::new(), &mut cfg_store, now, &mut log);
 loop {
-    // mesh poll → app.on_message(data, &our_dest, now, &mut log, None)
+    // mesh poll → let signer = lxmf::peek_source(data)
+    //                 .and_then(|src| node.storage().get_identity(&src));
+    //             app.on_message(data, &our_dest, now, &mut log, signer)
     //   on Inbound::Applied { blob, .. } → cfg_store.save(&blob)
 
     let tick = app.tick(&mut (&mut sensor, &mut actuator), &clock, &mut log);

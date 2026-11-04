@@ -1,0 +1,22 @@
+[reticulum]
+enable_transport = yes
+share_instance = yes
+instance_name = default
+
+[logging]
+loglevel = 4
+
+[interfaces]
+
+  # XIAO nRF52840 LNode — transport port (ACM1)
+  # Debug/flash port je ACM0 (za lnflash/cat)
+  [[XIAO LNode]]
+    type = SerialInterface
+    enabled = yes
+    port = /dev/ttyACM1
+    speed = 115200
+
+  # Lokalna IPv6 mreža — za morebitne sosednje Reticulum vozle
+  [[AutoInterface]]
+    type = AutoInterface
+    enabled = yes
