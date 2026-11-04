@@ -94,11 +94,13 @@ Differences from `lxmf_echo` (the raw-LXMF echo):
 
 - no `LxmfNode` inbox — the app unpacks the opportunistic packet itself,
   so the delivery destination registers *without* an inbox
-  (`accepts_links = false`, `ProofStrategy::App`, proving delivery via
-  `node.send_proof_on_peer` only when `on_message` returns
-  `Inbound::Applied`)
+  (`accepts_links = false`, `ProofStrategy::None`, because the `ECHS`
+  report itself is the reply)
 - sender signature verification via
-  `lxmf::peek_source(data).and_then(|src| node.storage().get_identity(&src))`
+  `lxmf::peek_source(data).and_then(|src| node.storage().get_identity(&src))`,
+  with `pinned_identities` retaining nearby (`hops <= 2`) and active
+  `app.target()` identities so public mesh announces cannot evict the
+  sender from the 8-slot `EmbeddedStorage::known_identities` table
 - echo logic lives in `leviculum_automation::echo`, not in the binary
 - the params blob is a RAM store — `ECHC` is data to echo, not config
   worth flash wear (and on a SoftDevice build loop NVMC writes are
@@ -124,7 +126,11 @@ a host running `lnsd` (either the system `lnsd` service on
 
 ```sh
 cd leviculum-automation/tests
+# Enkratno pošiljanje (one-shot):
 python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed "ojla"
+
+# Interaktivni terminal (brez besedila v argumentu — pošilja ob vsakem <Enter>):
+python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed
 ```
 
 ```text
@@ -153,6 +159,8 @@ How `echo-term.py` works:
 | Symptom | Meaning |
 |---|---|
 | `params rejected` | `ECHC` frame corrupt or `len > 32` |
-| `reply deferred (requesting path)` | target path missing; `node.request_path` issued and reply queued until path resolves |
+| `reply deferred (requesting path)` | target path missing; `node.remove_path` + `node.request_path` issued and reply queued until path resolves |
 | `applied` jumps >1 per message | board rebooted (boot-default apply counts) |
 | report with empty `len` | no params received yet — boot default |
+
+For a complete step-by-step protocol trace and annotated XIAO debug log, see [message-flow.md](message-flow.md).

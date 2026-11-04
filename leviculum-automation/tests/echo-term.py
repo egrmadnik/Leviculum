@@ -4,7 +4,8 @@ echo-term — pošilja ECHC parametre na auto_echo LNode in dekodira ECHS echo.
 
 Uporaba:
     python3 echo-term.py <delivery_hash> [sporocilo]
-    python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed "ping"
+    python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed "ping"   # enkratni echo
+    python3 echo-term.py 85c390a37c34762a3af3b2024aa63fed          # interaktivni terminal
 
 Wire format (leviculum-automation/src/frame.rs):
     frame = magic(4) + ver(1) + payload + crc32_ieee(4 LE)
@@ -15,6 +16,7 @@ Wire format (leviculum-automation/src/frame.rs):
 import base64
 import os
 import queue
+import readline  # noqa: F401  — zgodovina in urejanje vrstice v terminalu
 import subprocess
 import sys
 import threading
@@ -86,7 +88,7 @@ def stderr_thread(proc):
 
 def main() -> int:
     dest = sys.argv[1].replace(" ", "").lower() if len(sys.argv) > 1 else ""
-    payload = sys.argv[2].encode() if len(sys.argv) > 2 else b"ping"
+    one_shot_payload = sys.argv[2].encode() if len(sys.argv) > 2 else None
     if len(dest) != 32 or not all(c in "0123456789abcdef" for c in dest):
         print(f"Uporaba: {sys.argv[0]} <delivery_hash> [sporocilo]", file=sys.stderr)
         return 2
@@ -109,6 +111,79 @@ def main() -> int:
             proc.stdin.flush()
         except BrokenPipeError:
             pass
+
+    last_applied = None
+    last_host_announce = 0.0
+
+    def drain_stale():
+        while True:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                break
+
+    def exchange_echo(payload: bytes) -> bool:
+        nonlocal last_applied, last_host_announce
+        expected = payload[:ECHO_MAX]
+        if len(payload) > ECHO_MAX:
+            print(f"  (opomba: sporočilo skrajšano na {ECHO_MAX} B: {expected!r})")
+        drain_stale()
+        # Če je od zadnjega announce minilo >= 8 s, osvežimo našo identiteto v
+        # 8-režni tabeli EmbeddedStorage::known_identities na XIAO (če lnsd
+        # posreduje internetne najave).
+        now = time.monotonic()
+        if now - last_host_announce >= 8.0:
+            send("announce")
+            last_host_announce = now
+            time.sleep(0.15)
+        frame = echc_frame(expected)
+        b64_frame = base64.b64encode(frame).decode()
+        print(f"→ ECHC {expected!r}  ({len(frame)} B frame)")
+        send(f"send_opportunistic {dest} {b64_frame}")
+        last_tx = time.monotonic()
+        retried = False
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            if not retried and now - last_tx >= 6.0:
+                retried = True
+                send("announce")
+                last_host_announce = now
+                time.sleep(0.15)
+                send(f"send_opportunistic {dest} {b64_frame}")
+            try:
+                line = q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if line is None:
+                return False
+            if line.startswith("EVENT lxmf_msg_received") or line.startswith("EVENT lxmf_received"):
+                kv = dict(p.split("=", 1) for p in line.split()[2:] if "=" in p)
+                src = (kv.get("src") or kv.get("source") or "").lower()
+                if src and src != dest:
+                    continue
+                body_b64 = kv.get("body_b64") or kv.get("body") or ""
+                body = base64.b64decode(body_b64)
+                try:
+                    content, applied, uptime = echs_decode(body)
+                    # Ignoriraj star periodični ECHS od prejšnjega ukaza (če teče starejši FW)
+                    if content != expected and last_applied is not None and applied <= last_applied:
+                        continue
+                    last_applied = applied
+                    print(f"← ECHS {content!r}  applied={applied} uptime={uptime}s")
+                    print("   echo OK" if content == expected else "   echo MISMATCH!")
+                    return content == expected
+                except ValueError as e:
+                    print(f"← prejeto, ni ECHS: {e}  ({body[:16].hex()}…)")
+                    return False
+            if "lxmf_error" in line:
+                print(f"  napaka: {line}")
+                if "unknown_command:_send_opportunistic" in line:
+                    send(f"send {dest} {b64_frame}")
+
+        print("  timeout — echo ni prišel v 30s")
+        return False
 
     # Počakaj na lxmf_ready preden pošljemo prve ukaze
     ready_deadline = time.monotonic() + 10
@@ -153,46 +228,39 @@ def main() -> int:
         proc.terminate()
         return 1
 
-    # Pošlji še en announce, da ima XIAO zagotovo našo povratno pot/identiteto,
-    # nato pošlji ECHC frame kot opportunistično (single-packet) LXMF sporočilo.
+    # Pošlji še en announce, da ima XIAO zagotovo našo povratno pot/identiteto
     send("announce")
-    frame = echc_frame(payload)
-    b64_frame = base64.b64encode(frame).decode()
-    print(f"→ ECHC {payload!r}  ({len(frame)} B frame)")
-    send(f"send_opportunistic {dest} {b64_frame}")
+    last_host_announce = time.monotonic()
 
-    # Čakaj na ECHS echo
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        try:
-            line = q.get(timeout=1)
-        except queue.Empty:
-            continue
-        if line is None:
-            return 1
-        if line.startswith("EVENT lxmf_msg_received") or line.startswith("EVENT lxmf_received"):
-            kv = dict(p.split("=", 1) for p in line.split()[2:] if "=" in p)
-            src = (kv.get("src") or kv.get("source") or "").lower()
-            if src and src != dest:
-                continue
-            body_b64 = kv.get("body_b64") or kv.get("body") or ""
-            body = base64.b64decode(body_b64)
+    try:
+        if one_shot_payload is not None:
+            ok = exchange_echo(one_shot_payload)
+            return 0 if ok else 1
+
+        print(f"\nInteraktivni način (cilj: {dest}, max {ECHO_MAX} B).")
+        print("Vtipkajte besedilo in pritisnite <Enter> za pošiljanje (/announce, /quit za izhod).\n")
+        while True:
             try:
-                content, applied, uptime = echs_decode(body)
-                print(f"← ECHS {content!r}  applied={applied} uptime={uptime}s")
-                print("   echo OK" if content == payload else "   echo MISMATCH!")
-            except ValueError as e:
-                print(f"← prejeto, ni ECHS: {e}  ({body[:16].hex()}…)")
-            proc.terminate()
-            return 0 if content == payload else 1
-        if "lxmf_error" in line:
-            print(f"  napaka: {line}")
-            if "unknown_command:_send_opportunistic" in line:
-                send(f"send {dest} {b64_frame}")
-
-    print("  timeout — echo ni prišel v 30s")
-    proc.terminate()
-    return 1
+                text = input("echo> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not text:
+                continue
+            if text.lower() in ("/quit", "/exit", "quit", "exit"):
+                break
+            if text.lower() == "/announce":
+                send("announce")
+                print("  announce poslan")
+                continue
+            exchange_echo(text.encode())
+        return 0
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 if __name__ == "__main__":

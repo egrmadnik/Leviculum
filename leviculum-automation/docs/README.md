@@ -145,6 +145,12 @@ as `None` → defaults + no target.
 **Writing your own device** → [custom-device.md](custom-device.md) —
 the checklist, the contract, and the pitfalls in one page.
 
+**Message flow (Remote ↔ XIAO `auto_echo`)** → [message-flow.md](message-flow.md) —
+layer-by-layer packet anatomy, sequence diagram, and annotated XIAO debug-port trace.
+
+**Fast local stationary network setup** → [local-stationary-network.md](local-stationary-network.md) —
+configuring `lnsd` (`/etc/reticulum/config`) and XIAO LoRa nodes for low-latency, isolated stationary automation networks.
+
 ## Host-side consumers
 
 - `lnmsg/examples/thermostat_host.rs` — sets thermostat params and

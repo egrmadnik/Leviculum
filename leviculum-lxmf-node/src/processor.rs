@@ -1191,6 +1191,25 @@ impl LxmfHelperProcessor {
                 return;
             }
         };
+        if method == DeliveryMethod::Opportunistic {
+            if let Ok(sent) = ready.router.node_mut().send(core, &message) {
+                self.absorb(
+                    ready,
+                    core,
+                    RouterOutput {
+                        core: sent.core,
+                        events: Vec::new(),
+                    },
+                    out,
+                );
+                let mut event = vec![("dst", hex_encode(&peer)), ("body_b64", body_b64)];
+                if let Some(label) = fields_label {
+                    event.push(("fields", label.to_string()));
+                }
+                self.emitter.event("lxmf_msg_sent", &event);
+                return;
+            }
+        }
         match ready.router.enqueue(core, message) {
             Ok(output) => {
                 self.absorb(ready, core, output, out);

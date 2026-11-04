@@ -38,10 +38,10 @@ use leviculum_automation::hal::ConfigStore;
 use leviculum_automation::{App, Inbound, NoIo};
 use leviculum_core::embedded_storage::EmbeddedStorage;
 use leviculum_core::ifac::IfacConfig;
-use leviculum_core::node::{NodeCoreBuilder, NodeEvent};
+use leviculum_core::node::{NodeCoreBuilder, NodeEvent, SendError};
 use leviculum_core::traits::{Interface, Storage};
 use leviculum_core::transport::dispatch_actions;
-use leviculum_core::{DestinationHash, InterfaceId, ProofStrategy};
+use leviculum_core::{DestinationHash, Identity, InterfaceId};
 use leviculum_lxmf::LxmfNode;
 
 use leviculum_nrf::automation::{EmbassyClock as AutoClock, FirmwareLog};
@@ -272,13 +272,11 @@ async fn main(spawner: Spawner) {
     // --- 7. delivery destination (BREZ predala) -------------------------------
     //
     // `App<Echo>` sam razpakira opportunistični LXMF paket, zato ne rabimo
-    // LxmfNode inbox-a — registriramo samo `lxmf.delivery` destination z
-    // `ProofStrategy::App`, da potrdimo dostavo samo ko `on_message` sprejme
-    // veljaven `ECHC` okvir.
-    let mut delivery_dest =
+    // LxmfNode inbox-a — registriramo samo `lxmf.delivery` destination
+    // (`ProofStrategy::None`, saj je odgovor sam `ECHS` report).
+    let delivery_dest =
         LxmfNode::delivery_destination_without_inbox(node.identity().clone())
             .expect("[ECHO] delivery destination build failed");
-    delivery_dest.set_proof_strategy(ProofStrategy::App);
     let delivery_hash = *delivery_dest.hash();
     node.register_destination(delivery_dest);
     let our_dest = *delivery_hash.as_bytes();
@@ -317,6 +315,12 @@ async fn main(spawner: Spawner) {
     let mut app = App::boot(Echo::new(), &mut store, node.now_ms(), &mut alog);
     let auto_clock = AutoClock;
     let mut pending_report: Option<(EchoReport, bool)> = None;
+    // `EmbeddedStorage::known_identities` drži le 8 vnosov. Če je gostiteljski
+    // `lnsd` povezan z internetnimi TCP vozlišči, tuje najave (hops >= 3) hitro
+    // izrinejo identiteto lokalnega odjemalca (`echo-term`, hops <= 2). Zato
+    // hranimo do 8 bližnjih identitet + aktivni `app.target()` in jih po potrebi
+    // osvežimo v `node.remember_identity`.
+    let mut pinned_identities: Vec<([u8; 16], Identity)> = Vec::with_capacity(8);
 
     let mut transport_stats = leviculum_nrf::transport_stats::Ticker::new();
     let mut heap_census = leviculum_nrf::heap_census::Ticker::new();
@@ -329,13 +333,38 @@ async fn main(spawner: Spawner) {
     macro_rules! auto_step {
         ($events:expr) => {{
             leviculum_nrf::events::log_events($events, node.now_ms());
-            let mut applied_packet = false;
             for ev in $events.iter() {
                 if let NodeEvent::AnnounceReceived { announce, .. } = ev {
+                    let dest_bytes = *announce.destination_hash().as_bytes();
                     leviculum_nrf::announce::note_announce_heard(
                         node.now_ms(),
-                        announce.destination_hash().as_bytes(),
+                        &dest_bytes,
                     );
+                    let hops = node
+                        .storage()
+                        .get_path(&dest_bytes)
+                        .map(|p| p.hops)
+                        .unwrap_or(u8::MAX);
+                    if (hops <= 2 || app.target() == Some(dest_bytes))
+                        && announce.to_identity().is_ok()
+                    {
+                        if let Ok(id) = announce.to_identity() {
+                            if let Some((_, slot)) =
+                                pinned_identities.iter_mut().find(|(d, _)| *d == dest_bytes)
+                            {
+                                *slot = id;
+                            } else {
+                                if pinned_identities.len() >= 8 {
+                                    let evict_idx = pinned_identities
+                                        .iter()
+                                        .position(|(d, _)| Some(*d) != app.target())
+                                        .unwrap_or(0);
+                                    pinned_identities.remove(evict_idx);
+                                }
+                                pinned_identities.push((dest_bytes, id));
+                            }
+                        }
+                    }
                     let actions = announce_gate.periodic(&mut node, Some(&delivery_hash));
                     if !actions.is_empty() {
                         let mut ifaces: [&mut dyn Interface; 3] =
@@ -346,49 +375,44 @@ async fn main(spawner: Spawner) {
                 }
                 if let NodeEvent::PacketReceived { destination, data, .. } = ev {
                     if destination.as_bytes() == &our_dest {
-                        let signer = leviculum_automation::lxmf::peek_source(data)
-                            .and_then(|src| node.storage().get_identity(&src));
+                        let src_opt = leviculum_automation::lxmf::peek_source(data);
+                        if let Some(src) = src_opt {
+                            if node.storage().get_identity(&src).is_none() {
+                                if let Some((_, id)) =
+                                    pinned_identities.iter().find(|(d, _)| *d == src)
+                                {
+                                    node.remember_identity(DestinationHash::new(src), id.clone());
+                                }
+                            }
+                        }
+                        let signer = src_opt
+                            .and_then(|src| node.storage().get_identity(&src).cloned());
                         match app.on_message(
                             data,
                             &our_dest,
                             node.now_ms(),
                             &mut alog,
-                            signer,
+                            signer.as_ref(),
                         ) {
-                            Inbound::Applied { blob, .. } => {
+                            Inbound::Applied { blob, source, .. } => {
                                 store.save(&blob);
-                                applied_packet = true;
+                                if let Some(id) = signer {
+                                    if let Some((_, slot)) =
+                                        pinned_identities.iter_mut().find(|(d, _)| *d == source)
+                                    {
+                                        *slot = id;
+                                    } else {
+                                        if pinned_identities.len() >= 8 {
+                                            pinned_identities.remove(0);
+                                        }
+                                        pinned_identities.push((source, id));
+                                    }
+                                }
                             }
                             Inbound::Rejected => {
                                 log_critical!("[ECHO] params rejected");
                             }
                             Inbound::Ignored => {}
-                        }
-                    }
-                }
-            }
-            if applied_packet {
-                for ev in $events.iter() {
-                    if let NodeEvent::PacketProofRequested {
-                        packet_hash,
-                        destination_hash,
-                        interface_index,
-                        peer,
-                    } = ev
-                    {
-                        if destination_hash.as_bytes() == &our_dest {
-                            if let Ok(out) = node.send_proof_on_peer(
-                                packet_hash,
-                                destination_hash,
-                                *interface_index,
-                                *peer,
-                            ) {
-                                let mut ifaces: [&mut dyn Interface; 3] =
-                                    [&mut serial_iface, &mut lora_iface, &mut ble_iface];
-                                let dispatched =
-                                    dispatch_actions(&mut ifaces, out.actions, &ifac_configs);
-                                leviculum_nrf::dispatch::settle("echo-proof", &mut node, &dispatched);
-                            }
                         }
                     }
                 }
@@ -560,6 +584,11 @@ async fn main(spawner: Spawner) {
 
         if let Some((report, ref mut path_requested)) = pending_report {
             if let Some(target) = app.target() {
+                if node.storage().get_identity(&target).is_none() {
+                    if let Some((_, id)) = pinned_identities.iter().find(|(d, _)| *d == target) {
+                        node.remember_identity(DestinationHash::new(target), id.clone());
+                    }
+                }
                 if let Some(on_air) =
                     app.report_message(&identity, &our_dest, &report, node.now_ms())
                 {
@@ -577,6 +606,9 @@ async fn main(spawner: Spawner) {
                             );
                             pending_report = None;
                         }
+                        Err(SendError::PacingDelay { .. }) => {
+                            // Vmesnik čaka na prosto oddajno okno — poskusimo v naslednjem ciklu.
+                        }
                         Err(_) => {
                             if !*path_requested {
                                 *path_requested = true;
@@ -584,6 +616,9 @@ async fn main(spawner: Spawner) {
                                     "[ECHO] reply deferred (requesting path) dest={:02x}{:02x}{:02x}{:02x}",
                                     target[0], target[1], target[2], target[3]
                                 );
+                                // Odstranimo morebitno staro pot iz `path_table`, da predpomnjen
+                                // odgovor `lnsd` ne pade na preverjanju `AnnounceReplay`.
+                                let _ = node.remove_path(&target);
                                 let out = node.request_path(&target_hash);
                                 if !out.actions.is_empty() {
                                     let mut ifaces: [&mut dyn Interface; 3] =
