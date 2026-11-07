@@ -56,8 +56,8 @@ def echc_frame(payload: bytes) -> bytes:
 
 
 def echs_decode(frame: bytes):
-    """ECHS v1 → (content: bytes, applied: int, uptime_s: int)."""
-    if len(frame) != 50:
+    """ECHS v1 → (content: bytes, applied: int, uptime_s: int, rssi_dbm: int | None, snr_db: int | None)."""
+    if len(frame) not in (50, 54):
         raise ValueError(f"bad len {len(frame)}")
     body, crc = frame[:-4], frame[-4:]
     if zlib.crc32(body) != int.from_bytes(crc, "little"):
@@ -65,10 +65,19 @@ def echs_decode(frame: bytes):
     if body[:4] != b"ECHS" or body[4] != 1:
         raise ValueError("bad magic/ver")
     ln = body[5]
+    rssi_dbm = None
+    snr_db = None
+    if len(body) >= 50:
+        r = int.from_bytes(body[46:48], "little", signed=True)
+        s = int.from_bytes(body[48:50], "little", signed=True)
+        if r != -32768:
+            rssi_dbm, snr_db = r, s
     return (
         body[6 : 6 + ln],
         int.from_bytes(body[38:42], "little"),
         int.from_bytes(body[42:46], "little"),
+        rssi_dbm,
+        snr_db,
     )
 
 
@@ -166,15 +175,28 @@ def main() -> int:
                 body_b64 = kv.get("body_b64") or kv.get("body") or ""
                 body = base64.b64decode(body_b64)
                 try:
-                    content, applied, uptime = echs_decode(body)
+                    content, applied, uptime, rssi_dbm, snr_db = echs_decode(body)
                     # Ignoriraj star periodični ECHS od prejšnjega ukaza (če teče starejši FW)
                     if content != expected and last_applied is not None and applied <= last_applied:
                         continue
                     last_applied = applied
-                    print(f"← ECHS {content!r}  applied={applied} uptime={uptime}s")
+                    sig_str = (
+                        f"  rssi={rssi_dbm}dBm snr={snr_db}dB"
+                        if rssi_dbm is not None
+                        else "  rssi=USB"
+                    )
+                    print(f"← ECHS {content!r}  applied={applied} uptime={uptime}s{sig_str}")
                     print("   echo OK" if content == expected else "   echo MISMATCH!")
                     return content == expected
                 except ValueError as e:
+                    if body.startswith(b"echo: "):
+                        echoed = body[6:]
+                        if echoed == frame:
+                            print(f"← lxmf_echo {expected!r}  (surovi 'echo: ' odgovor)")
+                            print("   echo OK (opomba: na tem vozlišču teče lxmf_echo namesto auto_echo)")
+                            return True
+                        print(f"← lxmf_echo {echoed!r}")
+                        return echoed == expected
                     print(f"← prejeto, ni ECHS: {e}  ({body[:16].hex()}…)")
                     return False
             if "lxmf_error" in line:

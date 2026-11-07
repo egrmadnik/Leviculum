@@ -302,7 +302,10 @@ impl<'d, SPI: embedded_hal_async::spi::SpiBus> Radio<'d, SPI> {
         }
         let mut bstat = [0u8; 2];
         self.read(op::GET_RX_BUFFER_STATUS, &mut bstat)?;
-        let len = bstat[0].min(buf.len() as u8);
+        // `buf.len()` is 256 for the loop's receive buffer, which `as u8`
+        // truncates to 0: every frame was read as zero bytes long. The chip's
+        // length byte can never exceed 255 anyway, so clamp before narrowing.
+        let len = bstat[0].min(buf.len().min(u8::MAX as usize) as u8);
         block_on(self.bus.read_payload(bstat[1], &mut buf[..len as usize]))?;
         let mut pstat = [0u8; 3];
         self.read(op::GET_PACKET_STATUS, &mut pstat)?;

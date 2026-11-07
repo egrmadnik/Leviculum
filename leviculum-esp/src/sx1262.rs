@@ -160,19 +160,37 @@ impl<'d, SPI: SpiBus> Sx1262Bus<'d, SPI> {
         result
     }
 
-    /// A command whose answer is a status byte followed by `out.len()`
-    /// data bytes — `GetIrqStatus`, `GetRxBufferStatus`,
-    /// `GetPacketStatus`, `GetStatus`. Returns the status byte; the data
-    /// lands in `out`.
+    /// One full-duplex frame: clock `tx` out and capture the same number
+    /// of bytes in. All reads go through this — a single transfer, so
+    /// the byte positions are fixed by the datasheet tables and not by
+    /// how the SPI peripheral's FIFO behaves across a split
+    /// write-then-read (which is where an off-by-one hid on hardware).
+    async fn transfer(&mut self, tx: &[u8], rx: &mut [u8]) -> Result<(), Error> {
+        self.wait_busy()?;
+        self.nss.set_low();
+        let result = async {
+            self.spi.transfer(rx, tx).await.map_err(|_| Error::Spi)?;
+            self.spi.flush().await.map_err(|_| Error::Spi)
+        }
+        .await;
+        self.nss.set_high();
+        result
+    }
+
+    /// A `Get*` command: `opcode`, then a NOP that returns the status
+    /// byte, then `out.len()` data bytes (datasheet §13.5, every table
+    /// has that shape). Returns the status byte.
     pub async fn read_cmd(&mut self, opcode: u8, out: &mut [u8]) -> Result<u8, Error> {
-        let mut resp = [0u8; 32];
-        if out.len() + 1 > resp.len() {
+        let n = out.len();
+        if n + 2 > 32 {
             return Err(Error::Frame);
         }
-        self.transaction(&[opcode], &mut resp[..1 + out.len()])
-            .await?;
-        out.copy_from_slice(&resp[1..1 + out.len()]);
-        Ok(resp[0])
+        let mut tx = [0u8; 32];
+        let mut rx = [0u8; 32];
+        tx[0] = opcode;
+        self.transfer(&tx[..n + 2], &mut rx[..n + 2]).await?;
+        out.copy_from_slice(&rx[2..n + 2]);
+        Ok(rx[1])
     }
 
     /// `WriteBuffer` (0x0E): offset byte, then the packet.
@@ -180,23 +198,20 @@ impl<'d, SPI: SpiBus> Sx1262Bus<'d, SPI> {
         self.write_two(&[0x0E, 0x00], data).await
     }
 
-    /// `ReadBuffer` (0x1E): offset byte, status, then `out.len()` bytes.
+    /// `ReadBuffer` (0x1E): opcode, offset, a NOP that returns status,
+    /// then `out.len()` bytes (datasheet §13.2.4).
     pub async fn read_payload(&mut self, offset: u8, out: &mut [u8]) -> Result<(), Error> {
-        let mut resp = [0u8; 1];
-        self.wait_busy()?;
-        self.nss.set_low();
-        let r = async {
-            self.spi
-                .write(&[0x1E, offset])
-                .await
-                .map_err(|_| Error::Spi)?;
-            self.spi.read(&mut resp).await.map_err(|_| Error::Spi)?;
-            self.spi.read(out).await.map_err(|_| Error::Spi)?;
-            self.spi.flush().await.map_err(|_| Error::Spi)
+        let n = out.len();
+        if n + 3 > 260 {
+            return Err(Error::Frame);
         }
-        .await;
-        self.nss.set_high();
-        r
+        let mut tx = [0u8; 260];
+        let mut rx = [0u8; 260];
+        tx[0] = 0x1E;
+        tx[1] = offset;
+        self.transfer(&tx[..n + 3], &mut rx[..n + 3]).await?;
+        out.copy_from_slice(&rx[3..n + 3]);
+        Ok(())
     }
 }
 
@@ -208,14 +223,17 @@ impl<SPI: SpiBus> RegisterBus for Sx1262Bus<'_, SPI> {
         // data byte (datasheet §13.2.2, Table 13-3). Reading it into the
         // same buffer and discarding it is what makes the byte returned
         // here the register and not the status.
-        let header = [
+        // Opcode, address hi, address lo, NOP (→ status), NOP (→ data).
+        let tx = [
             opcode::READ_REGISTER,
             (addr >> 8) as u8,
             (addr & 0xFF) as u8,
+            0,
+            0,
         ];
-        let mut answer = [0u8; 2];
-        self.transaction(&header, &mut answer).await?;
-        Ok(answer[1])
+        let mut rx = [0u8; 5];
+        self.transfer(&tx, &mut rx).await?;
+        Ok(rx[4])
     }
 
     async fn write_reg(&mut self, addr: u16, value: u8) -> Result<(), Error> {

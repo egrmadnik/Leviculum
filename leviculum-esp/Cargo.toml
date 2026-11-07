@@ -36,6 +36,14 @@ bmv080-sdk = []
 # `export-esp.sh` — from the SDK root `BME690_SDK` or the in-tree
 # docs/sensors drop.
 bme690 = []
+# LXMF echo app instead of the PID regulator (`src/node/echo.rs`): a full
+# `lxmf.delivery` inbox that answers every message with `echo: <content>`.
+lxmf-echo = []
+# LXMF blink app instead of the PID regulator (`src/node/blink.rs`): the
+# user LED blinks as its own Embassy task at a frequency a remote node sets
+# by LXMF message (`blink <Hz>`), each change acknowledged by reply and
+# saved to flash. Alternative to `lxmf-echo`.
+lxmf-blink = []
 
 [build-dependencies]
 # Always present, used only when `bme690` is on: an optional build-dep
@@ -86,6 +94,17 @@ embedded-hal-async = "1"
 # requires a `#[global_allocator]` whether or not anything allocates yet.
 # esp-hal registers the `critical_section::Impl` the heap needs.
 embedded-alloc = { version = "0.7", default-features = false, features = ["llff"] }
+# The Embassy runtime on top of esp-hal: `esp-rtos` provides the scheduler,
+# the Embassy time driver and the thread-mode executor behind
+# `#[esp_rtos::main]`. As its docs say, no `arch-*` feature on
+# `embassy-executor`: the executor comes from `esp-rtos`.
+esp-rtos = { version = "0.4.0", features = ["esp32s3", "embassy"] }
+embassy-executor = { version = "0.10", default-features = false }
+embassy-time = "0.5"
+embassy-sync = "0.8"
+embassy-futures = "0.1.2"
+# The shared flash handle lives in a static (`node/storage.rs`).
+static_cell = "2"
 
 # esp-bootloader-esp-idf is used only through `esp_app_desc!()`, which
 # expands to a static in a named link section; cargo-machete cannot see

@@ -362,6 +362,19 @@ bsp-solarnode = ["softdevice", "battery", "gnss"]
 # reports `no-hardware` at runtime rather than needing a UF2 of its own.
 bsp-xiaokit = ["softdevice", "battery", "gnss"]
 
+# LXMF echo app on top of the LNode: replaces the announce-only delivery
+# destination with a full inbox and answers each message with
+# "echo: <content>" (`node/echo.rs`). Build the xiaokit binary with it:
+#   cargo build -p leviculum-nrf --release --features bsp-xiaokit,lxmf-echo --bin xiaokit
+lxmf-echo = []
+
+# LXMF blink app on top of the LNode (`node/blink.rs`): the blue LED
+# blinks as its own Embassy task at a frequency a remote node sets by LXMF
+# message (`blink <Hz>`), each change acknowledged by reply and saved to
+# flash. Alternative to `lxmf-echo`; build the xiaokit binary with it:
+#   cargo build -p leviculum-nrf --release --features bsp-xiaokit,lxmf-blink --bin xiaokit
+lxmf-blink = []
+
 display = ["dep:ssd1306", "dep:embedded-graphics", "dep:leviculum-screen"]
 gnss = [
     "dep:nmea0183",

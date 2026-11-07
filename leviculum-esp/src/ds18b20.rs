@@ -136,6 +136,13 @@ impl<'d> Ds18b20<'d> {
         if crc8(&sp[..8]) != sp[8] {
             return None;
         }
+        // An all-zero scratchpad passes CRC8 (the CRC of zeros is zero)
+        // but is not a reading — it is a line held low or a sensor that
+        // never answered. The config register byte 4 is never 0 on a
+        // real DS18B20 (its reserved bits read 1).
+        if sp.iter().all(|&b| b == 0) {
+            return None;
+        }
         // DS18B20 T: 16-bit signed, 12-bit fraction — raw/16 °C.
         let raw = i16::from_le_bytes([sp[0], sp[1]]);
         Some(raw as f32 / 16.0)

@@ -33,11 +33,14 @@
 
 #![no_std]
 
+extern crate alloc;
+
 pub mod automation;
 pub mod bme690;
 pub mod bmv080;
 pub mod boards;
 pub mod ds18b20;
+pub mod node;
 pub mod pid;
 pub mod pid_lxmf;
 pub mod radio;

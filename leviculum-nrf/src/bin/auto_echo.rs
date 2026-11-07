@@ -42,7 +42,8 @@ use leviculum_core::node::{NodeCoreBuilder, NodeEvent, SendError};
 use leviculum_core::traits::{Interface, Storage};
 use leviculum_core::transport::dispatch_actions;
 use leviculum_core::{DestinationHash, Identity, InterfaceId};
-use leviculum_lxmf::LxmfNode;
+use leviculum_lxmf::message::DeliveryMethod;
+use leviculum_lxmf::{LxmfNode, LxmfNodeConfig, LxmfNodeError, LxmfNodeEvent, Message};
 
 use leviculum_nrf::automation::{EmbassyClock as AutoClock, FirmwareLog};
 use leviculum_nrf::ble::{BleInterface, PeerEvent as BlePeerEvent};
@@ -68,6 +69,14 @@ impl ConfigStore for RamStore {
         self.0 = Some(blob.to_vec());
         true
     }
+}
+
+/// Čakajoči tekstovni echo odgovor (npr. za MeshChatX), ko pot do pošiljatelja
+/// še ni v usmerjevalni tabeli.
+struct PendingTextEcho {
+    dest: [u8; 16],
+    content: Vec<u8>,
+    timestamp: f64,
 }
 
 #[embassy_executor::main]
@@ -210,10 +219,26 @@ async fn main(spawner: Spawner) {
     .await;
     info!("SX1262 ready");
 
-    let radio_cfg =
-        leviculum_nrf::radio_store::load(xiaokit::CONFIG.radio_config_flash_page)
-            .and_then(leviculum_nrf::lora::RadioConfig::from_wire_config)
-            .unwrap_or_else(leviculum_nrf::lora::RadioConfig::eu_medium);
+    // Privzeti radijski profil za hitro lokalno stacionarno mrežo:
+    // 869.463 MHz, SF7, BW 250 kHz, CR 4/5, 22 dBm (ujema se z /etc/reticulum/config).
+    // Če je vozlišče priključeno na `lnsd` prek USB, lahko `lnsd` te parametre
+    // kadarkoli dinamično prepiše prek serijskega kontrolnega okvirja.
+    let radio_cfg = leviculum_nrf::lora::RadioConfig {
+        frequency_hz: 869_463_000,
+        sf: 7,
+        bw: 0x05, // 250 kHz (SX1262 Table 14-47)
+        cr: 0x01, // CR 4/5
+        tx_power_dbm: leviculum_core::rnode::DEFAULT_TX_POWER_DBM,
+        preamble_len: leviculum_core::rnode::derive_preamble_symbols(7, 5, 250_000),
+        bw_hz: 250_000,
+        cr_denom: 5,
+        csma_enabled: true,
+        radio_silent: false,
+        silence_lease_s: 0,
+        st_alock: 0,
+        lt_alock: 0,
+        lt_alock_present: false,
+    };
     let lora_channels = leviculum_nrf::lora::channels();
     if media.lora_enabled {
         let channel_seed = leviculum_nrf::lora::channel_seed();
@@ -269,16 +294,23 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(leviculum_nrf::stack_watermark_task());
     leviculum_nrf::log_stack("post-init");
 
-    // --- 7. delivery destination (BREZ predala) -------------------------------
+    // --- 7. delivery destination + LxmfNode (podpira ECHC/ECHS in MeshChatX) ---
     //
-    // `App<Echo>` sam razpakira opportunistični LXMF paket, zato ne rabimo
-    // LxmfNode inbox-a — registriramo samo `lxmf.delivery` destination
-    // (`ProofStrategy::None`, saj je odgovor sam `ECHS` report).
+    // Registriramo polno `lxmf.delivery` destinacijo (`accepts_links = true`,
+    // `ProofStrategy::All`), da lahko odjemalci kot MeshChatX pošiljajo navadna
+    // tekstovna sporočila prek Direct povezave ali Opportunistic paketa, hkrati
+    // pa `App<Echo>` obravnava binarne `ECHC` okvirje iz `echo-term.py`.
     let delivery_dest =
-        LxmfNode::delivery_destination_without_inbox(node.identity().clone())
+        LxmfNode::delivery_destination(node.identity().clone())
             .expect("[ECHO] delivery destination build failed");
     let delivery_hash = *delivery_dest.hash();
-    node.register_destination(delivery_dest);
+    let lxmf_config = LxmfNodeConfig {
+        max_incoming_resource_size: Some(leviculum_nrf::MAX_INCOMING_RESOURCE_BYTES as u64),
+        max_outgoing_delivery_size: Some(leviculum_nrf::MAX_INCOMING_RESOURCE_BYTES as u64),
+        auto_compress_resources: false,
+    };
+    let mut lxmf = LxmfNode::register(&mut node, delivery_dest, lxmf_config)
+        .expect("[ECHO] lxmf node registration failed");
     let our_dest = *delivery_hash.as_bytes();
     leviculum_nrf::identity::note_boot_identity(
         *node.identity().hash(),
@@ -315,6 +347,8 @@ async fn main(spawner: Spawner) {
     let mut app = App::boot(Echo::new(), &mut store, node.now_ms(), &mut alog);
     let auto_clock = AutoClock;
     let mut pending_report: Option<(EchoReport, bool)> = None;
+    let mut pending_text_echoes: Vec<PendingTextEcho> = Vec::new();
+    let mut last_lora_sig: Option<(i16, i16)> = None;
     // `EmbeddedStorage::known_identities` drži le 8 vnosov. Če je gostiteljski
     // `lnsd` povezan z internetnimi TCP vozlišči, tuje najave (hops >= 3) hitro
     // izrinejo identiteto lokalnega odjemalca (`echo-term`, hops <= 2). Zato
@@ -329,9 +363,17 @@ async fn main(spawner: Spawner) {
     log_critical!("[STG] main-loop");
     leviculum_nrf::boot_trace::phase(leviculum_nrf::boot_trace::Phase::MainLoop);
 
-    // Procesira NodeEvent-e: `PacketReceived` za našo destinacijo → on_message.
+    // Procesira NodeEvent-e:
+    // 1. Če prispe opportunistični `ECHC` okvir (`echo-term.py`), ga obdela `App<Echo>`
+    //    in vrne binarni `ECHS` report.
+    // 2. Sicer dogodek preda `LxmfNode` (MeshChatX Direct link ali Opportunistic tekst)
+    //    in ob `MessageReceived` vrne čitljiv tekstovni odgovor z RSSI/SNR in uptime.
     macro_rules! auto_step {
-        ($events:expr) => {{
+        ($events:expr, $signal:expr) => {{
+            let sig: Option<(i16, i16)> = $signal;
+            if sig.is_some() {
+                last_lora_sig = sig;
+            }
             leviculum_nrf::events::log_events($events, node.now_ms());
             for ev in $events.iter() {
                 if let NodeEvent::AnnounceReceived { announce, .. } = ev {
@@ -373,6 +415,8 @@ async fn main(spawner: Spawner) {
                         leviculum_nrf::dispatch::settle("announce-neighbour", &mut node, &dispatched);
                     }
                 }
+
+                let mut handled_by_echc = false;
                 if let NodeEvent::PacketReceived { destination, data, .. } = ev {
                     if destination.as_bytes() == &our_dest {
                         let src_opt = leviculum_automation::lxmf::peek_source(data);
@@ -395,6 +439,9 @@ async fn main(spawner: Spawner) {
                             signer.as_ref(),
                         ) {
                             Inbound::Applied { blob, source, .. } => {
+                                handled_by_echc = true;
+                                let (rssi, snr) = sig.unwrap_or((i16::MIN, i16::MIN));
+                                app.device_mut().set_last_signal(rssi, snr);
                                 store.save(&blob);
                                 if let Some(id) = signer {
                                     if let Some((_, slot)) =
@@ -409,10 +456,70 @@ async fn main(spawner: Spawner) {
                                     }
                                 }
                             }
-                            Inbound::Rejected => {
-                                log_critical!("[ECHO] params rejected");
+                            Inbound::Rejected | Inbound::Ignored => {}
+                        }
+                    }
+                }
+
+                if !handled_by_echc {
+                    if let Ok(lxmf_out) = lxmf.handle_event(&mut node, ev) {
+                        if !lxmf_out.core.actions.is_empty() {
+                            let mut ifaces: [&mut dyn Interface; 3] =
+                                [&mut serial_iface, &mut lora_iface, &mut ble_iface];
+                            let dispatched = dispatch_actions(
+                                &mut ifaces,
+                                lxmf_out.core.actions,
+                                &ifac_configs,
+                            );
+                            leviculum_nrf::dispatch::settle("lxmf", &mut node, &dispatched);
+                        }
+                        for lxmf_ev in lxmf_out.events {
+                            match lxmf_ev {
+                                LxmfNodeEvent::MessageReceived(msg) => {
+                                    let reply_bytes = format_text_echo(
+                                        &msg.content,
+                                        sig.or(last_lora_sig),
+                                        (node.now_ms() / 1000) as u32,
+                                    );
+                                    log_critical!(
+                                        "[ECHO] text rx src={:02x}{:02x}{:02x}{:02x} len={}",
+                                        msg.source_hash[0],
+                                        msg.source_hash[1],
+                                        msg.source_hash[2],
+                                        msg.source_hash[3],
+                                        msg.content.len(),
+                                    );
+                                    send_text_echo_or_queue(
+                                        &mut node,
+                                        &mut lxmf,
+                                        &pinned_identities,
+                                        msg.source_hash,
+                                        reply_bytes,
+                                        msg.timestamp,
+                                        &delivery_hash,
+                                        &mut serial_iface,
+                                        &mut lora_iface,
+                                        &mut ble_iface,
+                                        &ifac_configs,
+                                        &mut pending_text_echoes,
+                                    );
+                                }
+                                LxmfNodeEvent::PeerAnnounced { .. }
+                                | LxmfNodeEvent::DirectLinkEstablished { .. } => {
+                                    flush_pending_text_echoes(
+                                        &mut node,
+                                        &mut lxmf,
+                                        &pinned_identities,
+                                        &delivery_hash,
+                                        &mut pending_text_echoes,
+                                        &mut serial_iface,
+                                        &mut lora_iface,
+                                        &mut ble_iface,
+                                        &ifac_configs,
+                                    );
+                                }
+                                _ => {}
                             }
-                            Inbound::Ignored => {}
                         }
                     }
                 }
@@ -520,18 +627,20 @@ async fn main(spawner: Spawner) {
                     [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                 let dispatched = dispatch_actions(&mut ifaces, output.actions, &ifac_configs);
                 leviculum_nrf::dispatch::settle("ser-rx", &mut node, &dispatched);
-                auto_step!(&output.events);
+                auto_step!(&output.events, None);
             }
             Either4::First(Either4::Second(data)) => {
                 if !leviculum_nrf::media::lora_active() {
                     continue;
                 }
+                let lora_sig =
+                    leviculum_nrf::lora::last_reception().map(|r| (r.rssi_dbm, r.snr_db));
                 let output = node.handle_packet(InterfaceId(1), &data);
                 let mut ifaces: [&mut dyn Interface; 3] =
                     [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                 let dispatched = dispatch_actions(&mut ifaces, output.actions, &ifac_configs);
                 leviculum_nrf::dispatch::settle("lora-rx", &mut node, &dispatched);
-                auto_step!(&output.events);
+                auto_step!(&output.events, lora_sig);
             }
             Either4::First(Either4::Third(Either::First((peer, data)))) => {
                 leviculum_nrf::ble::incoming_held_sub(data.capacity());
@@ -546,7 +655,7 @@ async fn main(spawner: Spawner) {
                     [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                 let dispatched = dispatch_actions(&mut ifaces, output.actions, &ifac_configs);
                 leviculum_nrf::dispatch::settle("ble-rx", &mut node, &dispatched);
-                auto_step!(&output.events);
+                auto_step!(&output.events, None);
             }
             Either4::First(Either4::Third(Either::Second(event))) => {
                 let (label, output) = match event {
@@ -564,15 +673,28 @@ async fn main(spawner: Spawner) {
                     [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                 let dispatched = dispatch_actions(&mut ifaces, output.actions, &ifac_configs);
                 leviculum_nrf::dispatch::settle(label, &mut node, &dispatched);
-                auto_step!(&output.events);
+                auto_step!(&output.events, None);
             }
-            Either4::First(Either4::Fourth(())) => {
+                Either4::First(Either4::Fourth(())) => {
                 let output = node.handle_timeout();
                 let mut ifaces: [&mut dyn Interface; 3] =
                     [&mut serial_iface, &mut lora_iface, &mut ble_iface];
                 let dispatched = dispatch_actions(&mut ifaces, output.actions, &ifac_configs);
                 leviculum_nrf::dispatch::settle("timeout", &mut node, &dispatched);
-                auto_step!(&output.events);
+                auto_step!(&output.events, None);
+                if !pending_text_echoes.is_empty() {
+                    flush_pending_text_echoes(
+                        &mut node,
+                        &mut lxmf,
+                        &pinned_identities,
+                        &delivery_hash,
+                        &mut pending_text_echoes,
+                        &mut serial_iface,
+                        &mut lora_iface,
+                        &mut ble_iface,
+                        &ifac_configs,
+                    );
+                }
             }
         }
 
@@ -638,4 +760,234 @@ async fn main(spawner: Spawner) {
             }
         }
     }
+}
+
+/// Sestavi čitljiv tekstovni odgovor za odjemalce kot MeshChatX:
+/// `echo: <besedilo> [rssi=-48dBm snr=11dB up=120s]` (oz. `[up=120s]` brez LoRa).
+fn format_text_echo(original: &[u8], sig: Option<(i16, i16)>, uptime_s: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(original.len() + 48);
+    out.extend_from_slice(b"echo: ");
+    out.extend_from_slice(original);
+    let tail = match sig {
+        Some((rssi, snr)) if rssi != i16::MIN => {
+            alloc::format!(" [rssi={}dBm snr={}dB up={}s]", rssi, snr, uptime_s)
+        }
+        _ => alloc::format!(" [up={}s]", uptime_s),
+    };
+    out.extend_from_slice(tail.as_bytes());
+    out
+}
+
+enum TextEchoResult {
+    Sent,
+    Queued,
+    Failed,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_text_echo_or_queue(
+    node: &mut leviculum_core::node::NodeCore<
+        leviculum_nrf::rng::RawHwRng,
+        EmbassyClock,
+        EmbeddedStorage,
+    >,
+    lxmf: &mut LxmfNode,
+    pinned_identities: &[([u8; 16], Identity)],
+    dest: [u8; 16],
+    content: Vec<u8>,
+    timestamp: f64,
+    delivery_hash: &DestinationHash,
+    serial_iface: &mut EmbeddedInterface,
+    lora_iface: &mut LoRaInterface,
+    ble_iface: &mut BleInterface,
+    ifac_configs: &BTreeMap<usize, IfacConfig>,
+    pending: &mut Vec<PendingTextEcho>,
+) {
+    match try_send_text_echo(
+        node,
+        lxmf,
+        pinned_identities,
+        dest,
+        &content,
+        timestamp,
+        delivery_hash,
+        serial_iface,
+        lora_iface,
+        ble_iface,
+        ifac_configs,
+    ) {
+        TextEchoResult::Sent => {
+            log_critical!(
+                "[ECHO] text reply sent dest={:02x}{:02x}{:02x}{:02x}",
+                dest[0], dest[1], dest[2], dest[3]
+            );
+        }
+        TextEchoResult::Queued => {
+            log_critical!(
+                "[ECHO] text reply queued dest={:02x}{:02x}{:02x}{:02x}",
+                dest[0], dest[1], dest[2], dest[3]
+            );
+            pending.push(PendingTextEcho {
+                dest,
+                content,
+                timestamp,
+            });
+        }
+        TextEchoResult::Failed => {
+            log_critical!(
+                "[ECHO] text reply failed dest={:02x}{:02x}{:02x}{:02x}",
+                dest[0], dest[1], dest[2], dest[3]
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_send_text_echo(
+    node: &mut leviculum_core::node::NodeCore<
+        leviculum_nrf::rng::RawHwRng,
+        EmbassyClock,
+        EmbeddedStorage,
+    >,
+    lxmf: &mut LxmfNode,
+    pinned_identities: &[([u8; 16], Identity)],
+    dest: [u8; 16],
+    content: &[u8],
+    timestamp: f64,
+    delivery_hash: &DestinationHash,
+    serial_iface: &mut EmbeddedInterface,
+    lora_iface: &mut LoRaInterface,
+    ble_iface: &mut BleInterface,
+    ifac_configs: &BTreeMap<usize, IfacConfig>,
+) -> TextEchoResult {
+    if node.storage().get_identity(&dest).is_none() {
+        if let Some((_, id)) = pinned_identities.iter().find(|(d, _)| *d == dest) {
+            node.remember_identity(DestinationHash::new(dest), id.clone());
+        }
+    }
+    let dest_dh = DestinationHash::new(dest);
+    let method = if lxmf.direct_link(&dest_dh).is_some() {
+        DeliveryMethod::Direct
+    } else {
+        DeliveryMethod::Opportunistic
+    };
+    let our_hash = *delivery_hash.as_bytes();
+    let Ok(reply) = Message::create(
+        dest,
+        our_hash,
+        node.identity(),
+        timestamp,
+        b"echo".to_vec(),
+        content.to_vec(),
+        Vec::new(),
+        method,
+    ) else {
+        return TextEchoResult::Failed;
+    };
+
+    match lxmf.send(node, &reply) {
+        Ok(out) => {
+            if !out.core.actions.is_empty() {
+                let mut ifaces: [&mut dyn Interface; 3] = [serial_iface, lora_iface, ble_iface];
+                let dispatched = dispatch_actions(&mut ifaces, out.core.actions, ifac_configs);
+                leviculum_nrf::dispatch::settle("text-echo-tx", node, &dispatched);
+            }
+            TextEchoResult::Sent
+        }
+        Err(LxmfNodeError::DirectLinkUnavailable) if method == DeliveryMethod::Direct => {
+            let Ok(reply2) = Message::create(
+                dest,
+                our_hash,
+                node.identity(),
+                timestamp,
+                b"echo".to_vec(),
+                content.to_vec(),
+                Vec::new(),
+                DeliveryMethod::Opportunistic,
+            ) else {
+                return TextEchoResult::Failed;
+            };
+            match lxmf.send(node, &reply2) {
+                Ok(out) => {
+                    if !out.core.actions.is_empty() {
+                        let mut ifaces: [&mut dyn Interface; 3] =
+                            [serial_iface, lora_iface, ble_iface];
+                        let dispatched =
+                            dispatch_actions(&mut ifaces, out.core.actions, ifac_configs);
+                        leviculum_nrf::dispatch::settle("text-echo-tx2", node, &dispatched);
+                    }
+                    TextEchoResult::Sent
+                }
+                Err(_) => {
+                    let _ = node.remove_path(&dest);
+                    let pr = node.request_path(&dest_dh);
+                    if !pr.actions.is_empty() {
+                        let mut ifaces: [&mut dyn Interface; 3] =
+                            [serial_iface, lora_iface, ble_iface];
+                        let dispatched = dispatch_actions(&mut ifaces, pr.actions, ifac_configs);
+                        leviculum_nrf::dispatch::settle("text-echo-pr", node, &dispatched);
+                    }
+                    TextEchoResult::Queued
+                }
+            }
+        }
+        Err(
+            LxmfNodeError::Send(_)
+            | LxmfNodeError::UnknownPeer
+            | LxmfNodeError::DirectLinkUnavailable,
+        ) => {
+            let _ = node.remove_path(&dest);
+            let pr = node.request_path(&dest_dh);
+            if !pr.actions.is_empty() {
+                let mut ifaces: [&mut dyn Interface; 3] = [serial_iface, lora_iface, ble_iface];
+                let dispatched = dispatch_actions(&mut ifaces, pr.actions, ifac_configs);
+                leviculum_nrf::dispatch::settle("text-echo-pr", node, &dispatched);
+            }
+            TextEchoResult::Queued
+        }
+        Err(_) => TextEchoResult::Failed,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_pending_text_echoes(
+    node: &mut leviculum_core::node::NodeCore<
+        leviculum_nrf::rng::RawHwRng,
+        EmbassyClock,
+        EmbeddedStorage,
+    >,
+    lxmf: &mut LxmfNode,
+    pinned_identities: &[([u8; 16], Identity)],
+    delivery_hash: &DestinationHash,
+    pending: &mut Vec<PendingTextEcho>,
+    serial_iface: &mut EmbeddedInterface,
+    lora_iface: &mut LoRaInterface,
+    ble_iface: &mut BleInterface,
+    ifac_configs: &BTreeMap<usize, IfacConfig>,
+) {
+    pending.retain(|p| {
+        match try_send_text_echo(
+            node,
+            lxmf,
+            pinned_identities,
+            p.dest,
+            &p.content,
+            p.timestamp,
+            delivery_hash,
+            serial_iface,
+            lora_iface,
+            ble_iface,
+            ifac_configs,
+        ) {
+            TextEchoResult::Sent => {
+                log_critical!(
+                    "[ECHO] text reply (queued) sent dest={:02x}{:02x}{:02x}{:02x}",
+                    p.dest[0], p.dest[1], p.dest[2], p.dest[3]
+                );
+                false
+            }
+            TextEchoResult::Queued => true,
+            TextEchoResult::Failed => false,
+        }
+    });
 }

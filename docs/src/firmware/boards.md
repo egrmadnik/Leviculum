@@ -235,11 +235,14 @@ RGB on `P0.30`/`P0.06`/`P0.26`, **active low** where the carrier's are
 active high, so a panic blink and a fault blink the solar node's
 polarity writes would be invisible here. It has no GNSS enable line (a
 fitted L76K is simply powered, `GnssWiring.power_enable = None`), no
-user button, and no QSPI part — the plain XIAO marks the footprint
-`DNP` and the kit's variant comments the pins out, so
-`qspi_part = "none"` like the T114's and the RAK4631's, and the boot
-line reads `[QSPI] NONE board=xiaokit` rather than the solar node's
-ask-at-boot probe. It keeps the same UART pair and standby line for the
+user button, and a QSPI part it asks about at boot: the XIAO module
+carries a 2 MB P25Q16H on the same six pads the solar node maps, and a
+probe of a kit's XIAO answered `[QSPI] JEDEC id=85:60:15 ... state=ok`
+(2026-11-06), so `qspi_part = Some(P25Q16H)` and the boot line is the
+solar node's ask-at-boot `[QSPI] JEDEC` / `[QSPI] STORE` pair, not
+`NONE`. (An earlier version declared no part on the strength of a `DNP`
+mark on the Sense schematic; that was wrong for this hardware, and a unit
+whose footprint is empty still just prints `state=no-answer`.) It keeps the same UART pair and standby line for the
 L76K, and the same battery divider, which lives on the module. What it
 does add is the BQ25101's ISET pin `P0.13`, driven low for the 100 mA
 charge current upstream's `initVariant` chooses.
@@ -511,7 +514,7 @@ board. Exactly one BSP feature must be enabled per build; a
 | `bsp-t114` | T114 BSP (+ SoftDevice BLE + status display + GNSS + battery) | `leviculum-nrf/Cargo.toml:330` |
 | `bsp-rak4631` | RAK4631 BSP (+ SoftDevice BLE) | `leviculum-nrf/Cargo.toml:314` |
 | `bsp-solarnode` | SenseCAP Solar Node P1-Pro BSP (+ SoftDevice BLE + battery + GNSS). No display | `leviculum-nrf/Cargo.toml:351` |
-| `bsp-xiaokit` | XIAO nRF52840 + Wio-SX1262 kit BSP (+ SoftDevice BLE + battery + GNSS). No display, no QSPI part | `leviculum-nrf/Cargo.toml:361` |
+| `bsp-xiaokit` | XIAO nRF52840 + Wio-SX1262 kit BSP (+ SoftDevice BLE + battery + GNSS). No display; QSPI part asked at boot | `leviculum-nrf/Cargo.toml:361` |
 | `display` | SSD1306 OLED, probed at run time | `leviculum-nrf/Cargo.toml:363` |
 | `gnss` | NMEA0183 GNSS (ZOE-M8Q on the V2 baseboard, L76K on the T114 and the XIAO boards) | `leviculum-nrf/Cargo.toml:364` |
 | `battery` | pack-voltage monitor: the `BATTERY` log line, the panel's voltage and, on the V2, the telemetry field. Unconditional under `bsp-t114` (the divider is on every T114) and under the XIAO BSPs (it is on the XIAO module), opt-in on the V2 via `rak-baseboard` | `leviculum-nrf/Cargo.toml:370` |

@@ -14,6 +14,8 @@
 //!           +34        report-target destination hash (16 B)
 //!           +50        flag 0x54 — target present
 //! 0x701000  ID slot:   "IDT1" (4 B) + private key (64 B) + crc32 (4 B)
+//! 0x702000  blink slot: "LBLK" (4 B) + frequency in hundredths of a hertz
+//!           (u16 LE) + check word (the frequency XOR 0xB11C, u16 LE)
 //! ```
 //!
 //! No wear levelling: a config write is a user event, dozens a year
@@ -106,4 +108,36 @@ pub fn save_identity(
     buf[4 + ID_KEY_LEN..].copy_from_slice(&c.to_le_bytes());
     store.erase(ID_SLOT, ID_SLOT + SECTOR)?;
     store.write(ID_SLOT, &buf)
+}
+
+/// The Blink app's slot, the sector after the identity.
+const BLINK_SLOT: u32 = 0x0070_2000;
+const BLINK_MAGIC: &[u8; 4] = b"LBLK";
+const BLINK_CHECK_MASK: u16 = 0xB11C;
+const BLINK_FRAME_LEN: usize = 8;
+
+/// The persisted blink frequency in hundredths of a hertz, or `None` if the
+/// slot is blank (erased flash is all `0xFF`) or the check word does not
+/// match — both mean "use the default".
+pub fn load_blink(store: &mut esp_storage::FlashStorage<'_>) -> Option<u16> {
+    let mut buf = [0u8; BLINK_FRAME_LEN];
+    if store.read(BLINK_SLOT, &mut buf).is_err() || &buf[..4] != BLINK_MAGIC {
+        return None;
+    }
+    let centi = u16::from_le_bytes([buf[4], buf[5]]);
+    let check = u16::from_le_bytes([buf[6], buf[7]]);
+    (check == centi ^ BLINK_CHECK_MASK).then_some(centi)
+}
+
+/// Persist the blink frequency: erase the sector, write the record.
+pub fn save_blink(
+    store: &mut esp_storage::FlashStorage<'_>,
+    centi_hz: u16,
+) -> Result<(), esp_storage::FlashStorageError> {
+    let mut buf = [0u8; BLINK_FRAME_LEN];
+    buf[..4].copy_from_slice(BLINK_MAGIC);
+    buf[4..6].copy_from_slice(&centi_hz.to_le_bytes());
+    buf[6..8].copy_from_slice(&(centi_hz ^ BLINK_CHECK_MASK).to_le_bytes());
+    store.erase(BLINK_SLOT, BLINK_SLOT + SECTOR)?;
+    store.write(BLINK_SLOT, &buf)
 }

@@ -1,0 +1,135 @@
+xiaokit je poln Reticulum transport node na XIAO nRF52840 + Wio-SX1262 — isti firmware-stack kot solarnode/t114, minus carrier board
+(ni QSPI flash-a, ni gumbov, ni lastne GNSS napajanja).
+
+Vmesniki (3)
+
+┌───┬───────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ # │ Kaj               │ Namen                                                                                                         │
+├───┼───────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0 │ USB CDC-ACM, HDLC │ transport port → lnsd na hostu (node je Gateway do ostalih LNode-ov za njim)                                  │
+├───┼───────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 1 │ SX1262 LoRa       │ zračni vmesnik, eu_medium privzeto (869.463 MHz SF8/BW125), profil shranjen iz rnode -style configa in        │
+│   │                   │ traja v flashu                                                                                                │
+├───┼───────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 2 │ BLE peripheral    │ Columba v2.2 protokol čez SoftDevice — telefon/tablica se lahko priključi kot client                          │
+└───┴───────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+NodeCore routa pakete med vsemi tremi; zraven tega še debug CDC port (log + post-mortem) — zato 2 /dev/ttyACM\* .ali 
+
+Storitve nad transportom
+
+• LXMF delivery destinacija — node ima svoj lxmf.delivery hash, announce vsakih ~N minut z imenom ( leviculum-xiaokit , nastavljivo
+prek flash media/name zapisa)
+• Telemetry reporter — na zahtevo pošlje pozicijo/telemetrijo prek LXMF; viri: GNSS (opcijski L76K na UART — kit brez njega poroča no-
+hardware ), fixna pozicija iz flasha, die-temperatura
+• Remote mgmt — allow-list iz flasha določa, kdo sme administrirati node na daljavo
+• Propagation node (pn) — store-and-forward konfiguracija iz flasha
+• Transport statistika — byte counterji po carrierjih, odgovarja na /status in rnstatus -R (samo identitetam, ki so se prej
+pojavile prek USB)
+• Radio config — sprejme in persistira LoRa profil, ki ga pošlje host; lora=off izklopi radio
+
+Diagnostika/robustnost
+
+• boot trace (RESETREAS + breadcrumbs), HardFault/panic post-mortem čez reset, persistent log ring
+• panic LED + HardFault LED na RGB (active-low)
+• 1200-baud touch → UF2 bootloader (zato just flash-xiaokit deluje brez gumba)
+• flash persistence: identiteta, telemetrija, radio config, path/propagation zapisi
+
+Feature zastavice builda
+
+bsp-xiaokit = softdevice + battery + gnss — battery meri VBAT prek dividerja na AIN7 (BQ25101 charger je na modulu), gnss se ob bootu
+sam umakne če L76K ni prisoten.
+
+Kar še ni na nRF strani: avtomatizacijski wrapper ( automation.rs je pripravljen HAL, a xiaokit bin ga še ne uporablja — termostat
+logika teče samo na xiao_s3_auto ).
+
+---
+ >preveri če velja enak firmware xiao-nrf52840 sense plus kot za xiao nrf52840
+
+ Dobro vprašanje — "Sense Plus" ni isto kot navadni XIAO nRF52840. Preverim najprej, kaj se je na Plus varianti dejansko spremenilo, potem
+ primerjam s pinoutom, ki ga  xiaokit  uporablja.
+
+ ● web_search(query="Seeed XIAO nRF52840 Sense Plus vs XIAO n…")
+ └ Found 5 result(s) for "Seeed XIAO nRF52840 Sense Plus vs XIAO nRF52840 differences pinout"
+
+ Ključno: header pinout (D0–D10 → isti P-portovi) je očitno enak. Preverim še interne pine (RGB LED, battery ADC, charge), ki so tisti, ki
+ bi lahko zlomili firmware:
+
+ ● Fetched https://wiki.seeedstudio.com/XIAO-BLE-Sense-Pin-Multiplexing/
+ └ Fetched 73659 characters from https://wiki.seeedstudio.com/XIAO-BLE-Sense-Pin-Multiplexing/
+
+ ● Searched for USER_LED\|CHARGE\|ADC_BAT\|READ_BAT\|BAT\|P0.14\|P0.31\|P0.26\|P0.30\|P0.06\|P0.17\|NFC\|antenna in /tmp/devin-
+ overflows-1000/d1032ef8/content.txt
+
+ Vsi interni pini so enaki na vseh štirih variantah. Preverim še, kaj točno  xiaokit  board file uporabi (RXEN, UART/GNSS), da ocenim
+ konflikte z IMU/mikrofonom na Sense Plus:
+
+ ● Searched for LoRaRxEn\|P0_05\|P0_04\|Uart\|Gnss\|P1_11\|P1_12\|P0_09\|P0_10\|P0_14\|P0_31\|LED\|P0_26\|P0_30\|P0_06 in ./leviculum-nrf/
+ src/boards/xiaokit.rs
+
+ Da — preveril sem pinout vseh štirih variant in isti  xiaokit  firmware deluje tudi na XIAO nRF52840 Sense Plus. Vsak pin, ki ga firmware
+ dejansko uporabi, je na Sense Plus na istem P-portu:
+
+ ┌──────────────────────────────────────────┬─────────────────────────────────────────────┬──────────────────────────────────────────────┐
+ │ Firmware rabi                            │ Pin                                         │ Sense Plus                                   │
+ ├──────────────────────────────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────┤
+ │ LoRa CS / RXEN / BUSY / DIO1 / RST / SPI │ P0.04, P0.05, P0.29, P0.03, P0.28, P1.13–   │ enako (Wio-SX1262 sedi na istih pad-ih)      │
+ │                                          │ 15                                          │                                              │
+ ├──────────────────────────────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────┤
+ │ RGB LED (active-low)                     │ P0.26, P0.30, P0.06                         │ enako                                        │
+ ├──────────────────────────────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────┤
+ │ Battery ADC + enable                     │ P0.31 + P0.14                               │ enako                                        │
+ ├──────────────────────────────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────┤
+ │ GNSS UART (L76K opcija)                  │ P1.11/P1.12 (D6/D7)                         │ enako                                        │
+ ├──────────────────────────────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────┤
+ │ USB, SoftDevice, app base 0x27000        │ nRF52840                                    │ enako — isti UF2 family ( 0xADA52840 ), isti │
+ │                                          │                                             │ Seeed bootloader layout, UF2 drag-drop       │
+ │                                          │                                             │ deluje                                       │
+ └──────────────────────────────────────────┴─────────────────────────────────────────────┴──────────────────────────────────────────────┘
+
+ Kaj Plus doda — in firmware ignorira
+
+   • 9 dodatnih SMD pad-ov na hrbtu (D11–D16: 2. UART na P0.09/P0.10, 2. SPI, I2S, NFC) — neuporabljeni, brez konflikta;  nfc-pins-as-gpio
+    je že v build flagu
+   • LSM6DS3 IMU + PDM mikrofon — firmware jih ne uporablja
+   • BAT pad premaknjen — samo fizična postavitev, električno isto
+
+ Eno opozorilo, specifično za Sense
+
+ IMU LSM6DS3 je na internem I2C na P0.04/P0.05 — to sta ista pina kot radio CS in RXEN na Wio-SX1262 kitu. Električno bi moral delovati
+ (MCU poganja CS/RXEN push-pull, IMU v I2C idle stanju drži linije high-Z in šum ignorira), a je to deljenje, ki ga na navadnem XIAO ni.
+ Če bi radio kazal čudno obnašanje (CS se ne dvigne čisto), je IMU prvi osumljenec — z navadnim XIAO nRF52840 modulom tega tveganja ni.
+
+ Skratka: flashaj isti  xiaokit.uf2 , pričakuj enako obnašanje vključno z 2×CDC, LoRa, BLE in battery telemetrijo; IMU/mikrofon/dodatni
+ pini so na voljo za bodoče feature-je.
+
+>ali se lahko client - telefon/tablica priključi preko usb porta na xiao_kit ?
+
+Da — in to celo brez dodatnega firmware-ja. Transportni port (drugi CDC) ni generični serijski — govori pravi RNode host protokol: KISS
+ CMD_*  okviri ( DETECT ,  DATA ,  FREQUENCY ,  BANDWIDTH ,  SF ,  CR ,  RADIO_STATE ,  STAT_* ,  PLATFORM ,  FW_VERSION …). To je
+ natančno protokol, ki ga Reticulum/ Sideband  pričakuje od RNode naprave.
+
+ Telefon/tablica → xiaokit
+
+ Potrebuješ:
+
+   • Android napravo z USB OTG (host mode) — praktično vse novejše
+   • USB-C OTG kabel/adapter (telefon je host, plošča je device)
+   • Sideband (ali drugo RNS aplikacijo) → dodaj interface tipa RNode → USB serial. Sideband samo najde  /dev/ttyUSB*  napravo in pošlje
+   DETECT  handshake — transportni port odgovori, debug port ne.
+
+ Rezultat: telefon dobi poln Reticulum stack čez xiaokit — LoRa mešanje, LXMF sporočila, announce-je — brez host PC-ja. Plošča se napaja
+ iz telefona (TX ~120 mA peak, OK).
+
+ Opombe
+
+   • Samo Android — iOS nima RNS podpore za USB-serial RNode
+   • Ne hkrati z  lnsd  — transportni port ima enega consumerja; če ga daemon že drži, je za telefon zaseden (USB pa tako fizično ne gre
+   na dve napravi hkrati)
+   • Debug port ostane neodvisen — lahko paralelno gledaš log na PC-ju, če je plošča priključena nanj… ne, ne more biti na dveh hostih
+   hkrati: telefon je edini host. Debug lahko bereš prek OTG z terminal app (npr. Serial USB Terminal) ob Sidebandu — oba porta se
+   enumerirata
+   • 1200-baud touch: če aplikacija odpre port na 1200 baud, gre plošča v UF2 bootloader. Sideband/RNS tega ne počne; ročno nastavljanje
+   bauda v terminal app pusti pri miru
+   • Za vsakdanjo rabi je BLE interface 2 priročnejši — Sideband zna tudi čez BLE (Columba protokol je že v firmware-ju), brez kabla in
+   brez porabe telefonove baterije za napajanje plošče

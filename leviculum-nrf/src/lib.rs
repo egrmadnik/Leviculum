@@ -74,6 +74,11 @@ pub mod media;
 /// telemetry page and writable over USB only.
 pub mod mgmt;
 pub mod name;
+/// The LNode itself: the board seam and the sections of the firmware that
+/// are common to every unit (boot, Reticulum, carriers, storage,
+/// peripherals, event loop).
+#[cfg(feature = "softdevice")]
+pub mod node;
 /// The propagation-node role (#384 part 3): the board twin of lnpnd's
 /// engine, over the record-log adapters of `leviculum-pn-store`.
 #[cfg(feature = "softdevice")]

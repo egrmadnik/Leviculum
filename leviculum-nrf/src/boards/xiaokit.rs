@@ -145,20 +145,27 @@ pub type GroveSda = peripherals::P0_09;
 /// Grove SCL (`PIN_WIRE_SCL 31` = index 31 = P0.10, NFC2). See [`GroveSda`].
 pub type GroveScl = peripherals::P0_10;
 
-// No QSPI part — `CONFIG.qspi_part` is `None`, and the board declares no
-// `Qspi*` aliases. The evidence is the same shape as the T114's and the
-// RAK4631's (#384), with one step of indirection more: the kit's own
-// variant comments the whole `PIN_QSPI_*` block AND the
-// `EXTERNAL_FLASH_DEVICES P25Q16H` line out, and the plain XIAO's
-// schematic — the module this kit ships — prints U7's value as `DNP`.
-// The footprint and its six nets (P0.21/25/20/24/22/23, the same six the
-// solar node maps) belong to the XIAO nRF52840 *Plus*, and a kit built
-// around a Plus would carry a part — but that unit's honest board
-// declaration is the solar node's ask-at-boot shape, not this one's, and
-// it would fail the gate the moment an upstream tree is checked because
-// the defines the table would point at are commented out upstream. None
-// of it matters at run time yet: nothing in this firmware uses the
-// external flash for storage (`boards/solarnode.rs` says why).
+// QSPI flash, on the XIAO module itself. `CONFIG.qspi_part` is
+// `Some(&crate::qspi::P25Q16H)` and the board asks it its name once at boot
+// (`bin/xiaokit.rs`, `qspi::identify_and_mount_bounded`), the solar node's
+// ask-at-boot shape (`boards/solarnode.rs`, which also carries the
+// schematic citation for the six nets: P0.21 SCK, P0.25 CSN, P0.20 IO0,
+// P0.24 IO1, P0.22 IO2, P0.23 IO3 — the same module, so the same pads).
+//
+// This replaces an earlier "no QSPI part" declaration. That one rested on
+// the plain XIAO's schematic printing U7's value as `DNP` and on the kit's
+// variant commenting the `PIN_QSPI_*` block and `EXTERNAL_FLASH_DEVICES`
+// out. A XIAO nRF52840 of this kit was probed on 2026-11-06 and answered
+// `[QSPI] JEDEC id=85:60:15 part=P25Q16H bytes=2097152 match=1 state=ok`,
+// and Seeed's specification lists 2 MB of onboard QSPI flash: the part is
+// fitted, and the `DNP` reading was wrong for this hardware (the sheet
+// cited for it is the Sense variant's). The firmware still asserts nothing:
+// a unit whose footprint is empty prints `state=no-answer` and goes on.
+//
+// What is still true: nothing in this firmware uses the external flash for
+// storage yet. The boot reads the JEDEC id, looks for a record log, prints
+// one `[QSPI] STORE` line and drops the device; it formats nothing and
+// writes no status register (`boards/solarnode.rs` says why).
 
 // Battery
 /// Battery voltage sense (`BATTERY_PIN = PIN_VBAT` = index 32 = P0.31,
@@ -246,9 +253,9 @@ pub const CONFIG: super::BoardConfig = super::BoardConfig {
     lora_tcxo_voltage_reg: 0x02, // 1.8 V
     lora_spi_freq_hz: LORA_SPI_FREQ_HZ,
     lora_max_power_dbm: LORA_MAX_POWER_DBM,
-    // The kit ships the plain XIAO, whose own schematic marks U7 `DNP`
-    // and whose variant comments the pins out. See the block above.
-    qspi_part: None,
+    // The kit's XIAO carries the part; the boot asks it (see the QSPI
+    // block above) and `bin/xiaokit.rs` does the asking.
+    qspi_part: Some(&crate::qspi::P25Q16H),
 };
 
 /// Panic-LED descriptor — port, pin, active-low flag — for `set_panic_led`.

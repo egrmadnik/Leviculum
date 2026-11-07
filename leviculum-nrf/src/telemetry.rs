@@ -244,6 +244,7 @@ pub fn inbound_fixed_position_receiver(
 /// +0x300  node name record         ("LNAM", node_name_store)          44 B
 /// +0x400  propagation-node config  ("LPNC", pn_config_store)          12 B
 /// +0x500  remote-mgmt allow-list   ("LMGA", mgmt_allow_store)        136 B
+/// +0x600  blink frequency          ("LBLK", Blink app)                  8 B
 /// ```
 ///
 /// The target keeps offset 0, where every fielded board already has it, so
@@ -271,6 +272,34 @@ const NAME_OFFSET: u32 = 0x300;
 const PN_CONFIG_OFFSET: u32 = 0x400;
 /// See [`TARGET_OFFSET`].
 const MGMT_ALLOW_OFFSET: u32 = 0x500;
+/// The Blink app's frequency record (`lxmf-blink` builds write it; every
+/// build carries it across a save). See [`TARGET_OFFSET`].
+const BLINK_OFFSET: u32 = 0x600;
+
+/// The blink-frequency record: magic `LBLK`, the frequency in hundredths
+/// of a hertz (u16 LE), and a check word that is the frequency XOR
+/// [`BLINK_CHECK_MASK`]. Erased flash (all 0xFF) fails the magic, so a
+/// board that never saved one reads `None`.
+pub const BLINK_RECORD_SIZE: usize = 8;
+const BLINK_MAGIC: [u8; 4] = *b"LBLK";
+const BLINK_CHECK_MASK: u16 = 0xB11C;
+
+fn encode_blink(centi_hz: u16) -> [u8; BLINK_RECORD_SIZE] {
+    let mut r = [0xFFu8; BLINK_RECORD_SIZE];
+    r[0..4].copy_from_slice(&BLINK_MAGIC);
+    r[4..6].copy_from_slice(&centi_hz.to_le_bytes());
+    r[6..8].copy_from_slice(&(centi_hz ^ BLINK_CHECK_MASK).to_le_bytes());
+    r
+}
+
+fn decode_blink(r: &[u8; BLINK_RECORD_SIZE]) -> Option<u16> {
+    if r[0..4] != BLINK_MAGIC {
+        return None;
+    }
+    let centi = u16::from_le_bytes([r[4], r[5]]);
+    let check = u16::from_le_bytes([r[6], r[7]]);
+    (check == centi ^ BLINK_CHECK_MASK).then_some(centi)
+}
 
 /// The page layout's collision check, run by the compiler rather than by
 /// a reviewer reading three offsets: each record must end before the next
@@ -299,8 +328,9 @@ const _: () = {
     );
     assert!(
         MGMT_ALLOW_OFFSET + leviculum_core::mgmt_allow_store::ENCODED_SIZE_ALIGNED as u32
-            <= PAGE_SIZE
+            <= BLINK_OFFSET
     );
+    assert!(BLINK_OFFSET + BLINK_RECORD_SIZE as u32 <= PAGE_SIZE);
 };
 
 /// Pending save requests. Depth 1 for the same reason as the radio store:
@@ -327,6 +357,7 @@ static PENDING_SAVE_PN: Channel<CriticalSectionRawMutex, (SaveTicket, StoredPnCo
     Channel::new();
 static PENDING_SAVE_MGMT: Channel<CriticalSectionRawMutex, (SaveTicket, StoredMgmtAllow), 1> =
     Channel::new();
+static PENDING_SAVE_BLINK: Channel<CriticalSectionRawMutex, (SaveTicket, u16), 1> = Channel::new();
 
 /// One record's persist bookkeeping: the [`PersistGate`] that says whether
 /// a given save has reached the page, plus the wake-up that saves the
@@ -371,6 +402,7 @@ static MEDIA_PERSIST: PersistSlot = PersistSlot::new();
 static NAME_PERSIST: PersistSlot = PersistSlot::new();
 static PN_PERSIST: PersistSlot = PersistSlot::new();
 static MGMT_PERSIST: PersistSlot = PersistSlot::new();
+static BLINK_PERSIST: PersistSlot = PersistSlot::new();
 
 /// A save the caller may wait for with [`confirm`], returned by every
 /// `request_save*`.
@@ -547,6 +579,27 @@ fn read_mgmt_record(page: u32) -> [u8; leviculum_core::mgmt_allow_store::ENCODED
     read_record(page + MGMT_ALLOW_OFFSET)
 }
 
+fn read_blink_record(page: u32) -> [u8; BLINK_RECORD_SIZE] {
+    read_record(page + BLINK_OFFSET)
+}
+
+/// Read the persisted blink frequency in hundredths of a hertz, or `None`
+/// if the record is blank or corrupt (the Blink app then uses its default).
+pub fn load_blink(page: u32) -> Option<u16> {
+    decode_blink(&read_blink_record(page))
+}
+
+/// Ask the store task to persist the blink frequency (hundredths of a
+/// hertz). Never blocks, like [`request_save`].
+pub fn request_save_blink(centi_hz: u16) -> PendingSave {
+    let save = BLINK_PERSIST.issue();
+    if PENDING_SAVE_BLINK.try_send((save.ticket, centi_hz)).is_err() {
+        let _ = PENDING_SAVE_BLINK.try_receive();
+        let _ = PENDING_SAVE_BLINK.try_send((save.ticket, centi_hz));
+    }
+    save
+}
+
 fn read_record<const N: usize>(addr: u32) -> [u8; N] {
     let mut buf = [0u8; N];
     // SAFETY: `addr` is inside a flash page supplied by the board config,
@@ -652,7 +705,7 @@ const SAVE_RETRY_MS: u64 = 250;
 #[cfg(feature = "softdevice")]
 #[embassy_executor::task]
 pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
-    use embassy_futures::select::{select, select4, Either, Either4};
+    use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
     use embedded_storage_async::nor_flash::NorFlash;
 
     loop {
@@ -663,7 +716,11 @@ pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
                 PENDING_SAVE_MEDIA.receive(),
                 PENDING_SAVE_NAME.receive(),
             ),
-            select(PENDING_SAVE_PN.receive(), PENDING_SAVE_MGMT.receive()),
+            select3(
+                PENDING_SAVE_PN.receive(),
+                PENDING_SAVE_MGMT.receive(),
+                PENDING_SAVE_BLINK.receive(),
+            ),
         )
         .await;
         // Whichever record the request names, the others are read back off
@@ -675,6 +732,7 @@ pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
         let mut name = Aligned(read_name_record(page));
         let mut pn = Aligned(read_pn_record(page));
         let mut mgmt = Aligned(read_mgmt_record(page));
+        let mut blink = Aligned(read_blink_record(page));
         // Which record this request names, its ticket, and the word the
         // log line uses. The ticket goes back through the slot on every
         // exit path below — that is what the requester's ack waits on.
@@ -695,13 +753,17 @@ pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
                 name = Aligned(encode_node_name(chosen.as_ref()));
                 (&NAME_PERSIST, ticket, "node-name")
             }
-            Either::Second(Either::First((ticket, config))) => {
+            Either::Second(Either3::First((ticket, config))) => {
                 pn = Aligned(encode_pn_config(&config));
                 (&PN_PERSIST, ticket, "pn-config")
             }
-            Either::Second(Either::Second((ticket, list))) => {
+            Either::Second(Either3::Second((ticket, list))) => {
                 mgmt = Aligned(encode_mgmt_allow(&list));
                 (&MGMT_PERSIST, ticket, "mgmt-allow")
+            }
+            Either::Second(Either3::Third((ticket, centi_hz))) => {
+                blink = Aligned(encode_blink(centi_hz));
+                (&BLINK_PERSIST, ticket, "blink")
             }
         };
 
@@ -716,6 +778,7 @@ pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
             && read_name_record(page) == name.0
             && read_pn_record(page) == pn.0
             && read_mgmt_record(page) == mgmt.0
+            && read_blink_record(page) == blink.0
         {
             crate::log::log_fmt("[TELEMETRY] ", format_args!("persist skipped, unchanged"));
             slot.finish(ticket, Persisted::Durable);
@@ -732,7 +795,8 @@ pub async fn store_task(flash: &'static crate::flash::SharedFlash, page: u32) {
                 flash.write(page + MEDIA_OFFSET, &media.0).await?;
                 flash.write(page + NAME_OFFSET, &name.0).await?;
                 flash.write(page + PN_CONFIG_OFFSET, &pn.0).await?;
-                flash.write(page + MGMT_ALLOW_OFFSET, &mgmt.0).await
+                flash.write(page + MGMT_ALLOW_OFFSET, &mgmt.0).await?;
+                flash.write(page + BLINK_OFFSET, &blink.0).await
             }
             .await;
             match result {

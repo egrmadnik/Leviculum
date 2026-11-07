@@ -88,7 +88,7 @@ impl Params for EchoParams {
     }
 }
 
-/// `ECHS` v1 — 41-byte payload: the echo plus liveness counters.
+/// `ECHS` v1 — 45-byte payload: the echo plus liveness counters and radio signal.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EchoReport {
     /// Echoed length — mirrors `EchoParams::len`.
@@ -101,6 +101,10 @@ pub struct EchoReport {
     /// replayed.
     pub applied: u32,
     pub uptime_s: u32,
+    /// Last received LoRa RSSI in dBm (`i16::MIN` when not received over radio).
+    pub rssi_dbm: i16,
+    /// Last received LoRa SNR in dB (`i16::MIN` when not received over radio).
+    pub snr_db: i16,
 }
 
 impl EchoReport {
@@ -109,29 +113,45 @@ impl EchoReport {
         let n = (self.len as usize).min(ECHO_MAX);
         &self.payload[..n]
     }
+
+    /// `(rssi_dbm, snr_db)` if a radio signal measurement is present.
+    pub fn signal(&self) -> Option<(i16, i16)> {
+        (self.rssi_dbm != i16::MIN).then_some((self.rssi_dbm, self.snr_db))
+    }
 }
 
 impl Report for EchoReport {
     const MAGIC: [u8; 4] = *b"ECHS";
     const VERSION: u8 = 1;
-    const PAYLOAD_LEN: usize = 1 + ECHO_MAX + 4 + 4;
+    const PAYLOAD_LEN: usize = 1 + ECHO_MAX + 4 + 4 + 2 + 2;
 
     fn write(&self, out: &mut Buf<'_>) {
         out.u8(self.len);
         out.bytes(&self.payload);
         out.u32(self.applied);
         out.u32(self.uptime_s);
+        out.i16(self.rssi_dbm);
+        out.i16(self.snr_db);
     }
 
     fn read(c: &mut Cursor<'_>) -> Result<Self, FrameError> {
         let len = c.u8()?;
         let mut payload = [0u8; ECHO_MAX];
         payload.copy_from_slice(c.bytes(ECHO_MAX)?);
+        let applied = c.u32()?;
+        let uptime_s = c.u32()?;
+        let (rssi_dbm, snr_db) = if c.remaining() >= 4 {
+            (c.i16()?, c.i16()?)
+        } else {
+            (i16::MIN, i16::MIN)
+        };
         Ok(Self {
             len,
             payload,
-            applied: c.u32()?,
-            uptime_s: c.u32()?,
+            applied,
+            uptime_s,
+            rssi_dbm,
+            snr_db,
         })
     }
 }
@@ -140,6 +160,8 @@ impl Report for EchoReport {
 pub struct Echo {
     params: EchoParams,
     applied: u32,
+    last_rssi_dbm: i16,
+    last_snr_db: i16,
 }
 
 impl Default for Echo {
@@ -153,7 +175,16 @@ impl Echo {
         Self {
             params: EchoParams::DEFAULT,
             applied: 0,
+            last_rssi_dbm: i16::MIN,
+            last_snr_db: i16::MIN,
         }
+    }
+
+    /// Record the radio signal strength (RSSI in dBm, SNR in dB) of the
+    /// last received packet (`i16::MIN` when received over non-radio transport).
+    pub fn set_last_signal(&mut self, rssi_dbm: i16, snr_db: i16) {
+        self.last_rssi_dbm = rssi_dbm;
+        self.last_snr_db = snr_db;
     }
 }
 
@@ -180,6 +211,8 @@ impl Device for Echo {
             payload: self.params.payload,
             applied: self.applied,
             uptime_s: (now_ms / 1000) as u32,
+            rssi_dbm: self.last_rssi_dbm,
+            snr_db: self.last_snr_db,
         }
     }
 }
@@ -202,10 +235,13 @@ mod tests {
             payload: *b"abc\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
             applied: 7,
             uptime_s: 60,
+            rssi_dbm: -52,
+            snr_db: 9,
         };
         let got = EchoReport::decode(&r.encode()).unwrap();
         assert_eq!(got, r);
         assert_eq!(got.content(), b"abc");
+        assert_eq!(got.signal(), Some((-52, 9)));
     }
 
     #[test]

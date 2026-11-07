@@ -65,6 +65,8 @@
 - [Supported boards](firmware/boards.md)
 - [Automation devices on an LNode](firmware/automation-device.md)
   - [Testing an automation device](firmware/automation-testing.md)
+- [Writing an automation app (node-level)](firmware/automation-app-guide.md)
+  - [The Blink app](firmware/blink-app.md)
 - [Building and flashing](firmware/flashing.md)
 - [Serial ports and udev](firmware/serial-ports.md)
 - [The USB control envelope](firmware/usb-control-envelope.md)
