@@ -12,7 +12,7 @@
 
 use esp_hal::gpio::{AnyPin, Output};
 use esp_hal::peripherals::{
-    Peripherals, ADC1, FLASH, FROM_CPU_INTR0, I2C0, RNG, SPI2, TIMG0, USB_DEVICE,
+    Peripherals, ADC1, FLASH, FROM_CPU_INTR0, I2C0, RNG, SPI2, TIMG0, USB_DEVICE, WIFI,
 };
 
 use crate::boards::BoardConfig;
@@ -79,6 +79,8 @@ pub struct System {
     /// (`esp_rtos::start`).
     pub timg0: TIMG0<'static>,
     pub sw_int0: FROM_CPU_INTR0<'static>,
+    /// The WiFi radio (`wifi` feature: `node::wifi`).
+    pub wifi: WIFI<'static>,
 }
 
 /// What [`Board::wire`] returns: every peripheral the shared code takes.

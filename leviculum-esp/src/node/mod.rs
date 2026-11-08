@@ -16,29 +16,23 @@
 //! | [`peripherals`] | the add-on I2C sensors (BMV080, BME690) |
 //! | [`reticulum`] | identity and the transport node |
 //! | [`storage`] | the shared internal-flash handle |
-//! | [`app`] | the app seam: [`App`] and [`Ctx`] |
+//! | [`app`] | the app seam — [`App`] and [`Ctx`] — and the applications: `pid_app` (default), `echo` (`lxmf-echo`), `blink` (`lxmf-blink`) |
 //! | [`mainloop`] | the cooperative event loop |
 //! | `responder` | the LXMF inbox shared by the echo and blink apps |
-//! | `pid_app` | the PID valve regulator app (default) |
-//! | `echo` | the LXMF echo app (`lxmf-echo` feature) |
-//! | `blink` | the LED blink app (`lxmf-blink` feature) |
+//! | `wifi` | the WiFi carrier: UDP and TCP interfaces 1 and 2 (`wifi` feature) |
 
 pub mod app;
-#[cfg(feature = "lxmf-blink")]
-pub mod blink;
 pub mod board;
 pub mod boot;
 pub mod carriers;
-#[cfg(feature = "lxmf-echo")]
-pub mod echo;
 pub mod mainloop;
 pub mod peripherals;
-#[cfg(not(any(feature = "lxmf-echo", feature = "lxmf-blink")))]
-pub mod pid_app;
 #[cfg(any(feature = "lxmf-echo", feature = "lxmf-blink"))]
 pub mod responder;
 pub mod reticulum;
 pub mod storage;
+#[cfg(feature = "wifi")]
+pub mod wifi;
 
 #[cfg(all(feature = "lxmf-echo", feature = "lxmf-blink"))]
 compile_error!("`lxmf-echo` and `lxmf-blink` are alternative apps: enable one");
@@ -53,11 +47,11 @@ use esp_hal::timer::timg::TimerGroup;
 /// The app a build runs: the PID regulator, the echo inbox with
 /// `--features lxmf-echo`, or the LED blinker with `--features lxmf-blink`.
 #[cfg(feature = "lxmf-blink")]
-pub type DefaultApp = blink::BlinkApp;
+pub type DefaultApp = app::blink::BlinkApp;
 #[cfg(feature = "lxmf-echo")]
-pub type DefaultApp = echo::EchoApp;
+pub type DefaultApp = app::echo::EchoApp;
 #[cfg(not(any(feature = "lxmf-echo", feature = "lxmf-blink")))]
-pub type DefaultApp = pid_app::PidApp;
+pub type DefaultApp = app::pid_app::PidApp;
 
 /// Boot an LNode on board `B` and run it forever.
 pub async fn run<B: Board>(spawner: Spawner) -> ! {
@@ -86,6 +80,14 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
     let mut node = reticulum::build(&identity);
     if carrier.is_up() {
         reticulum::register_interface(&mut node);
+    }
+    // The WiFi interfaces are ids 1 and 2, when the feature is on and an
+    // SSID was compiled in. The stack's seed wants any entropy at all;
+    // uptime at this point in boot is plenty and asks nothing of the TRNG
+    // the node already owns.
+    #[cfg(feature = "wifi")]
+    if wifi::start(spawner, system.wifi, crate::uptime_ms(), &mut boot.log) {
+        wifi::register_interfaces(&mut node);
     }
     let flash = storage::share(flash);
 

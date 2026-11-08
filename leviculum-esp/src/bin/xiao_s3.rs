@@ -81,6 +81,7 @@ impl Board for XiaoS3 {
                 adc1: p.ADC1,
                 timg0: p.TIMG0,
                 sw_int0: p.FROM_CPU_INTR0,
+                wifi: p.WIFI,
             },
             led: led.degrade(),
             lora: LoraWiring {

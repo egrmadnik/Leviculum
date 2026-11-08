@@ -6,6 +6,21 @@
 //! needs real concurrency (a blinking LED, a flash writer) spawns Embassy
 //! tasks from `start` with `ctx.spawner`; the loop's methods must not
 //! block.
+//!
+//! The applications themselves live beside this file:
+//!
+//! | module | app |
+//! |---|---|
+//! | `pid_app` | the PID valve regulator (default) |
+//! | `blink` | the LED blinker (`lxmf-blink` feature) |
+//! | `echo` | the LXMF echo inbox (`lxmf-echo` feature) |
+
+#[cfg(feature = "lxmf-blink")]
+pub mod blink;
+#[cfg(feature = "lxmf-echo")]
+pub mod echo;
+#[cfg(not(any(feature = "lxmf-echo", feature = "lxmf-blink")))]
+pub mod pid_app;
 
 use embassy_executor::Spawner;
 use leviculum_core::node::NodeEvent;
@@ -30,8 +45,12 @@ pub struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
-    /// Put the actions of a `TickOutput` on the air.
+    /// Put the actions of a `TickOutput` on the air: the WiFi socket
+    /// tasks take theirs first (`node::wifi::egress`), the LoRa carrier
+    /// what remains.
     pub fn dispatch(&mut self, out: TickOutput) {
+        #[cfg(feature = "wifi")]
+        let out = crate::node::wifi::egress(out);
         self.carrier.dispatch(out, self.log);
     }
 

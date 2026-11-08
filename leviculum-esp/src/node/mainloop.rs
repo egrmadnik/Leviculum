@@ -38,7 +38,9 @@ pub async fn run<B: crate::node::board::Board, A: App>(
         // ---- mesh ingress ------------------------------------------------
         // Poll the radio, hand complete Reticulum packets to the node,
         // dispatch whatever comes back (rebroadcasts, our own traffic).
-        if ctx.carrier.is_up() {
+        // A WiFi build runs the node's timers even with the LoRa radio
+        // down: the mesh may live on wire alone.
+        if ctx.carrier.is_up() || cfg!(feature = "wifi") {
             if let Some(out) = ctx.carrier.ingest(ctx.node, ctx.log) {
                 handle(&mut ctx, &mut app, out);
             }
@@ -48,6 +50,19 @@ pub async fn run<B: crate::node::board::Board, A: App>(
             if crate::uptime_ms() >= next_announce {
                 announce(&mut ctx, &app);
                 next_announce = crate::uptime_ms() + REANNOUNCE_MS;
+            }
+        }
+
+        // ---- WiFi ingress -------------------------------------------------
+        // Complete packets the socket tasks deframed, plus their log lines.
+        #[cfg(feature = "wifi")]
+        {
+            while let Ok(line) = crate::node::wifi::LOG.try_receive() {
+                ctx.log.line("[WIFI] ", format_args!("{line}"));
+            }
+            while let Ok((iface, packet)) = crate::node::wifi::INBOUND.try_receive() {
+                let out = ctx.node.handle_packet(iface, &packet);
+                handle(&mut ctx, &mut app, out);
             }
         }
 

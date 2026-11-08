@@ -47,8 +47,10 @@ pub mod radio;
 pub mod store;
 pub mod sx1262;
 
+#[cfg(not(feature = "wifi"))]
 use core::mem::MaybeUninit;
 
+#[cfg(not(feature = "wifi"))]
 use embedded_alloc::LlffHeap as Heap;
 #[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
 use esp_hal::i2c::master::I2c;
@@ -87,6 +89,11 @@ pub const FW_BUILD_STAMP: &str = concat!(
 // Heap
 // ---------------------------------------------------------------------
 
+// With `wifi`, esp-alloc is the global allocator instead (its
+// `global-allocator` feature comes on through esp-rtos/esp-radio) — one
+// heap serves the driver's internal mallocs and Rust's `alloc`, which
+// also frees the 128 KiB `HEAP_MEM` a second allocator would pin.
+#[cfg(not(feature = "wifi"))]
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
@@ -102,9 +109,16 @@ static HEAP: Heap = Heap::empty();
 /// message paths allocate per packet on top of it. Still well under the
 /// ESP32-S3's 512 KiB SRAM, and the watermark that would raise it is
 /// runtime-measurable.
+#[cfg(not(feature = "wifi"))]
 pub const HEAP_SIZE: usize = 128 * 1024;
 
+/// Bytes for the single esp-alloc heap under `wifi`: the driver's
+/// documented ~64 KiB plus the Rust consumers HEAP_SIZE sized.
+#[cfg(feature = "wifi")]
+pub const HEAP_SIZE: usize = 192 * 1024;
+
 /// Initialise the heap allocator. Called once by [`init`].
+#[cfg(not(feature = "wifi"))]
 fn init_heap() {
     static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
     // SAFETY: called once at startup, before anything concurrent exists.
@@ -134,6 +148,11 @@ fn init_heap() {
 /// measurement behind it.
 pub fn init() -> Peripherals {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    // `wifi`: esp-alloc is the one allocator (see the global_allocator
+    // note above); otherwise the embedded-alloc heap.
+    #[cfg(feature = "wifi")]
+    esp_alloc::heap_allocator!(size: HEAP_SIZE);
+    #[cfg(not(feature = "wifi"))]
     init_heap();
     peripherals
 }

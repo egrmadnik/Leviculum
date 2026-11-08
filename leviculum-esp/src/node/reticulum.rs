@@ -57,11 +57,17 @@ pub fn identity(log: &mut UsbLog<'static>, flash: &mut esp_storage::FlashStorage
 
 /// Build the transport node around `identity`.
 pub fn build(identity: &Identity) -> Box<Node> {
-    NodeCoreBuilder::new().identity(identity.clone()).build_boxed(
-        Trng::try_new().expect("TRNG source enabled by the caller"),
-        EspClock,
-        MemoryStorage::compact(),
-    )
+    // Transport on, as on the nRF boards: the node forwards other nodes'
+    // traffic between its interfaces — with `wifi` that is the
+    // LoRa↔TCP/UDP bridge.
+    NodeCoreBuilder::new()
+        .identity(identity.clone())
+        .enable_transport(true)
+        .build_boxed(
+            Trng::try_new().expect("TRNG source enabled by the caller"),
+            EspClock,
+            MemoryStorage::compact(),
+        )
 }
 
 /// Name the LoRa interface and set its MTU.

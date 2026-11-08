@@ -157,7 +157,15 @@ impl Carrier {
         };
         for action in out.actions {
             let data: Vec<u8> = match action {
-                Action::SendPacket { data, .. } | Action::Broadcast { data, .. } => data,
+                // Only LoRa-bound traffic goes on the air — a SendPacket
+                // for another interface (the WiFi ids) is not ours.
+                Action::SendPacket { iface, data, .. } if iface == InterfaceId(0) => data,
+                Action::Broadcast {
+                    data,
+                    exclude_iface,
+                    ..
+                } if exclude_iface != Some(InterfaceId(0)) => data,
+                _ => continue,
             };
             for frame in leviculum_core::rnode::build_lora_frames(&data, self.tx_seq << 4) {
                 let timeout = leviculum_core::sx126x::tx_timeout_ms(

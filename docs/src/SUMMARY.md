@@ -67,6 +67,8 @@
   - [Testing an automation device](firmware/automation-testing.md)
 - [Writing an automation app (node-level)](firmware/automation-app-guide.md)
   - [The Blink app](firmware/blink-app.md)
+  - [Building xiao_s3_blink.bin](firmware/xiao-s3-blink-build.md)
+- [WiFi interfaces on the ESP32-S3](firmware/esp-wifi.md)
 - [Building and flashing](firmware/flashing.md)
 - [Serial ports and udev](firmware/serial-ports.md)
 - [The USB control envelope](firmware/usb-control-envelope.md)

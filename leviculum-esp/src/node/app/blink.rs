@@ -36,7 +36,7 @@ use esp_hal::gpio::{Level, Output};
 use leviculum_core::node::NodeEvent;
 use leviculum_core::DestinationHash;
 
-use crate::node::app::{App, Ctx};
+use super::{App, Ctx};
 use crate::node::board::AppWiring;
 use crate::node::responder::Responder;
 use crate::node::storage::{self, SharedFlash};
