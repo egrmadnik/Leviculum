@@ -32,3 +32,43 @@ otherwise opportunistically. On failure:
 
 The reply function runs in the main loop once per message — it must not
 block and must not wait for hardware.
+
+## A message's life
+
+```
+peer sends LXMF to the delivery hash
+        │
+        ▼
+main loop: node.handle_packet ──► events batch ──► responder.on_events
+        │                                         │
+        │  LxmfNodeEvent::MessageReceived         │  reply(content)
+        │  ──► send_or_queue                      ▼
+        │                              ┌─────────────────────┐
+        │                              │ link open?          │
+        │                              │  yes → DeliveryMethod::Direct
+        │                              │  no  → Opportunistic│
+        │                              └──────────┬──────────┘
+        │                                         ▼
+        │                              lxmf.send ──► ok? ──► reply sent
+        │                                         │ no
+        │                                         ▼
+        │                              queue + path request
+        │                              (ensure_direct_link / request_path)
+        ▼
+   PeerAnnounced / DirectLinkEstablished ──► flush the queue
+```
+
+Send failures fall into three buckets: retryable (queue + ask for a
+path), link-closed (retry opportunistically once), permanent (log,
+drop).
+
+## Key points
+
+- **The app supplies two things**: a title and `fn(&[u8]) -> Vec<u8>`.
+  Everything else — destination registration, proofs, links, path
+  requests, reply queueing — is the responder's.
+- **Direct link first, opportunistic second.** A reply rides an open
+  link when there is one; otherwise it goes as a single packet.
+- **Replies survive missing paths.** A queued reply flushes when the
+  peer announces or a link comes up.
+- **8 KiB cap, no bzip2** — sized for the ESP heap and flash.

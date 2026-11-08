@@ -40,3 +40,37 @@ fn handle(ctx, app, out: TickOutput) {
 The app reacts to what arrived (an LXMF delivery, a link) before the
 same batch's outbound packets are transmitted — so a reply computed in
 `on_events` can still ride the batch's dispatch.
+
+## One pass, as a sequence
+
+```
+pass N                                  pass N+1
+┌──────────────────────────────────────────────┐
+│ 1. sensors.poll                              │
+│ 2. carrier.ingest ──► node.handle_packet ─┐  │
+│    node.handle_timeout ───────────────────┤  │
+│    (re-announce every 60 s)               │  │
+│ 3. wifi: drain LOG, INBOUND ──► node ─────┼──┤
+│ 4. commands: read bytes ──► app.on_line   │  │
+│    (WIFI … → wifi::on_line instead)       │  │
+│ 5. app.tick                               │  │
+│ 6. sleep TICK_MS (100 ms) ──► executor    │  │
+│    runs the app's and wifi's tasks        │  │
+│ 7. every 5 s: banner + LED blink          │  │
+└──────────────────────────────────────────────┘
+```
+
+Every step that returns a `TickOutput` funnels through `handle()`:
+the app sees the events, then the actions go on the air.
+
+## Key points
+
+- **One loop, all ingress.** LoRa, WiFi and the debug port are three
+  polling points in the same pass — no locks, no queues except the
+  bounded channels the tasks feed.
+- **The app never blocks.** `on_events`/`on_line`/`tick` run in the
+  loop; anything slow or timed must be a spawned task.
+- **The node's timers run even with LoRa down** on a `wifi` build —
+  the mesh may live on wire alone.
+- **Announce cadence is 60 s** (first at 30 s) so the fleet keeps our
+  path warm.

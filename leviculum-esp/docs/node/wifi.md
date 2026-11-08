@@ -30,6 +30,34 @@ published to `INBOUND`, a bounded channel (8) of
 lines the loop prints as `[WIFI] …` (a formed string is leaked —
 bounded to a few bring-up sites; there is no log object in the tasks).
 
+## Tasks and channels
+
+```
+              ┌─────────────── main loop (cooperative) ───────────────┐
+              │  Ctx::dispatch ──► wifi::egress(out)                  │
+              │     SendPacket/Broadcast ──► TX channels              │
+              │  INBOUND ──► node.handle_packet(iface, packet)        │
+              │  LOG ──► [WIFI] lines · WIFI … commands ──► settings  │
+              └───────┬──────────────────────────▲────────────────────┘
+                      │ framed packets          │ (iface, packet)
+                      ▼                          │
+   ┌──────────────────┴──────────────────────────┴───────────────────┐
+   │ Embassy tasks (spawned by wifi::start)                          │
+   │                                                                │
+   │  connection ──► set_config · connect_async · rejoin            │
+   │  net_task   ──► embassy-net runner                             │
+   │  udp::task   ──► bind → recv/send ──► HDLC deframe ──► INBOUND │
+   │  tcp::task   ──► dial → read/write ──► HDLC deframe ──► INBOUND│
+   └────────────────────────────────────────────────────────────────┘
+                              ▲
+              settings change (WIFI command) bumps VERSION
+              → every task re-reads and re-applies, no rebuild
+```
+
+`settings.rs` is the shared truth; the tasks poll `cfg_version()` each
+cycle instead of being woken — a config change converges within a
+second.
+
 ## Egress routing
 
 `Ctx::dispatch` calls `wifi::egress(out)` first:
@@ -94,3 +122,16 @@ instead of the separate 128 KiB `embedded-alloc` heap.
 would silently drop the tail and corrupt the HDLC stream for the rest
 of the connection. `send` loops until the whole frame is out, then
 flushes.
+
+## Key points
+
+- **Four tasks, one stack.** `connection` + `net_task` own the radio
+  and DHCP; `udp::task`/`tcp::task` own one socket each.
+- **The loop and the tasks never share memory** — only bounded
+  channels (`TX` down, `INBOUND`/`LOG` up). Nothing blocks across the
+  boundary.
+- **Config is runtime.** `WIFI …` commands on the debug port change
+  SSID/PSK/ports/targets live; `WIFI SAVE` persists to flash. The env
+  knobs are just the defaults a fresh flash starts from.
+- **The radio tolerates a missing network.** No SSID → dark; AP drops
+  → rejoin every 5 s; TCP target unreachable → retry every 5 s.

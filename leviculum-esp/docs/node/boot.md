@@ -23,3 +23,43 @@ learn what is on it.
 `Booted` is what boot leaves behind: the log, the LED, and its polarity.
 `node::run` moves the log into the app's `Ctx` and keeps the LED for
 the banner — unless `App::OWNS_STATUS_LED` says the app drives it.
+
+## The boot timeline
+
+```
+reset ──► init() ──► B::wire ──► esp_rtos::start
+                                   │
+                                   ▼
+                         boot::early ──► UsbLog (identify line)
+                                   │    LED parked dark
+                                   ▼
+                    carriers::start ──► [LORA] state=up|down
+                                   │
+                                   ▼
+                    peripherals::start ──► [BMV080]/[BME690] state=…
+                                   │
+                                   ▼
+                    …node, wifi, app…
+                                   │
+                                   ▼
+                         mainloop::run
+                                   │  every pass:  [WIFI]/[LORA]/[PID] lines
+                                   ▼
+                        every 5 s:  banner (identify) + LED blink
+```
+
+A peripheral that cannot be configured (SPI or I2C refused) sends boot
+down `halt_blinking`: blink + re-identify forever, instead of a silent
+halt.
+
+## Key points
+
+- **The USB port IS the debug port.** No UART bridge on these boards —
+  what a capture sees is what the log wrote.
+- **Every line is stamped** with `t=<uptime_ms>`; the banner repeats
+  every 5 s so a reader who attaches late never has to reset the board.
+- **The LED is the no-cable boot proof** — parked dark, blinked at the
+  banner, or owned by the app (Blink).
+- **A broken bus blinks, a dead radio runs.** Only configuration
+  failures are fatal (`halt_blinking`); absence of hardware is a log
+  line.

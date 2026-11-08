@@ -23,3 +23,38 @@ type Node = NodeCore<Trng, EspClock, MemoryStorage>;
   between its interfaces — with `wifi` that is the LoRa↔TCP/UDP bridge.
 - **`register_interface(node)`** — names `InterfaceId(0)` `lora_sx1262`
   and sets HW_MTU 508 (the RNode figure the fleet agrees on).
+
+## Identity and node, in one picture
+
+```
+                 flash sector 0x701000
+                 ┌────────────────────┐
+                 │ "IDT1" + key + crc │
+                 └─────────┬──────────┘
+                           │ load (or generate + save once)
+                           ▼
+   TrngSource (held for life) ──► Identity
+                                   │
+                                   ▼
+   EspClock (uptime_ms) ──► NodeCoreBuilder
+   MemoryStorage ────────►   .enable_transport(true)
+   Trng (node entropy) ──►   .build_boxed() ──► Box<Node>
+                                                   │
+                        ┌──────────────────────────┤
+                        ▼                          ▼
+            register_interface(0)       wifi::register_interfaces
+            "lora_sx1262" · MTU 508      "wifi_udp" · "wifi_tcp"
+```
+
+Why `Box<Node>`: the transport is a > 40 KiB struct — `build_boxed`
+keeps it off the stack, on the heap.
+
+## Key points
+
+- **The identity is the address.** The destination hash a remote node
+  sends to is derived from this key; it only stays stable because the
+  key is persisted once and reused.
+- **No RTC, no wall clock.** `EspClock` is monotonic; announce
+  timestamps come from the transport's learned timebase.
+- **Transport is on.** The node forwards other nodes' traffic between
+  its interfaces — with `wifi`, that is the LoRa↔TCP/UDP bridge.

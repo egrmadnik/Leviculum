@@ -41,3 +41,33 @@ let nss: xiao_s3::LoRaNss = p.GPIO41;
 
 assigning each GPIO to a named alias fails to compile if either side
 moves a net.
+
+## What `wire` hands out
+
+```
+ board binary (xiao_s3.rs)                  Board trait
+ ─────────────────────────                  ───────────
+ const NAME · CONFIG · LORA · LED_ACTIVE_HIGH
+ fn wire(p: Peripherals) ──► Wiring
+                              ├─ system ─ usb · flash · rng+adc1 (TRNG)
+                              │           timg0+sw_int0 (tick) · wifi
+                              ├─ led    ─ AnyPin: the status LED
+                              ├─ lora   ─ SPI2 + sck/mosi/miso/nss/
+                              │           busy/reset/dio1/rxen
+                              ├─ sensors─ I2C0 + sda/scl (Qwiic pair)
+                              └─ app    ─ onewire · valve · led (if the
+                                          app owns it, filled by run)
+```
+
+Everything downstream consumes `Wiring`; only the two bins and the
+board module ever touch GPIO numbers.
+
+## Key points
+
+- **The seam is one trait.** A new board is a new `Board` impl plus a
+  `node::run` call — no shared code changes.
+- **`wire` touches no hardware.** It is pin bookkeeping; the modules
+  that open the peripherals are where the errors surface.
+- **Named pin aliases are the contract.** `let nss: xiao_s3::LoRaNss =
+  p.GPIO41` fails to compile when the binary and the board file
+  disagree about a net.

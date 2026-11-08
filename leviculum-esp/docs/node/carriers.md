@@ -42,3 +42,39 @@ Each packet is split by `rnode::build_lora_frames` with the carrier's
 sequence nibble (`tx_seq << 4`), transmitted with a timeout computed
 from the channel parameters (`sx126x::tx_timeout_ms`), and `listen` is
 re-armed after every transmit — the chip lands in standby after TX.
+
+## The two paths
+
+```
+ RX path (per loop pass, radio up):
+   radio.poll_rx ──► Rx::Frame ──► SplitReassembler.feed ──► complete packet?
+        │                (≤ 254 B)     (reassembles across frames)     │
+        │  Rx::BadCrc ──► log rx err=crc ──────────────────────────────┤ no
+        │  Rx::Idle ────► nothing                                       │
+        ▼                                                              │ yes
+   node.handle_packet(InterfaceId(0), packet) ◄────────────────────────┘
+        │
+        ▼
+   TickOutput ──► handle(): app.on_events first, then dispatch
+
+ TX path (per loop pass):
+   TickOutput.actions ──► SendPacket/Broadcast ──► iface 0? ──no──► skip
+        │                                          │yes
+        │                                          ▼
+        │                            build_lora_frames (254 B splits,
+        │                             tx_seq nibble in the header)
+        │                                          │
+        │                                          ▼
+        │                            radio.transmit (timeout from
+        │                             bw/sf/cr/preamble) ──► listen()
+        └─► (WiFi-bound actions were already taken by wifi::egress)
+```
+
+## Key points
+
+- **Interface 0 only.** `SendPacket` for another iface is not the
+  radio's; a `Broadcast` excludes the interface it came in on.
+- **Degraded, not dead.** A radio that fails bring-up leaves
+  `Carrier { radio: None }`: the node keeps running, LoRa-less.
+- **One reassembler, one transmit at a time** — the loop serialises
+  both directions; `listen` is re-armed after every TX.

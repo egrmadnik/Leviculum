@@ -3,6 +3,29 @@
 How the firmware goes from source to a running LNode on an ESP32-S3
 board (XIAO ESP32-S3 + Wio-SX1262, Heltec V4).
 
+## The pipeline at a glance
+
+```
+ source (src/bin, src/node, build.rs)
+    │
+    ▼
+ esp toolchain (rustc fork, channel "esp")
+    │  rust-toolchain.toml selects it on `cd leviculum-esp`
+    │  .cargo/config.toml sets the xtensa target + link flags
+    │  build.rs embeds git sha + links the sensor SDKs
+    ▼
+ cargo build --release ──► target/xtensa-esp32s3-none-elf/release/<bin>
+    │                       (ELF: loadable sections + DWARF)
+    ▼
+ espflash save-image ──► <bin>.bin   (ESP-IDF image the ROM accepts)
+    │
+    ▼
+ espflash flash ──► board (hold BOOT + tap RESET if needed)
+    │
+    ▼
+ [FW_BUILD] git_sha=… dirty=…  ← the boot log proves which commit ran
+```
+
 ## Toolchain — why `esp`, not stable
 
 The target is `xtensa-esp32s3-none-elf`. Stock rustc does not emit that
@@ -106,5 +129,20 @@ LEVICULUM_TCP_TARGET=192.168.1.10:4242 \
 cargo build --release --bin xiao_s3 --features wifi
 ```
 
-With no `LEVICULUM_WIFI_SSID` compiled in the radio stays dark
-(`[WIFI] state=off reason=no-ssid`).
+With no `LEVICULUM_WIFI_SSID` compiled in, boot logs
+`[WIFI] state=dark ssid=none cfg=default` — and the radio can still be
+brought up at runtime: `WIFI SSID <name>` + `WIFI SAVE` on the debug
+port, no rebuild.
+
+## Key points
+
+- **Source it first.** `~/export-esp.sh` is what puts the Xtensa GCC
+  linker on PATH; without it the link step fails.
+- **`--release` is the only profile that fits** (`opt-level = "z"`,
+  LTO); DWARF is kept in the ELF for `addr2line` but never lands in
+  the image.
+- **Two steps, two formats.** `cargo build` gives the ELF; only
+  `espflash save-image` produces the bootable image the ROM accepts —
+  and it refuses to overwrite a stale `.bin`.
+- **The boot log is the receipt.** `[FW_BUILD] git_sha=… dirty=…`
+  proves which commit's bytes are on the board.

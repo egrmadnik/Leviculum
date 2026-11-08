@@ -25,6 +25,33 @@ The loop is async on the Embassy executor: `App` methods run in it and
 tasks from `start` via `ctx.spawner` (Blink does this for the LED and
 for flash persistence; the PID app for valve timing).
 
+## The seam, in one picture
+
+```
+                         mainloop (owns node, carrier, log)
+ ┌────────────────────────────────────────────────────────────────┐
+ │  each pass the loop calls the app:                             │
+ │    node events ──► app.on_events(ctx, events)                  │
+ │    debug line  ──► app.on_line(ctx, line)                      │
+ │    once/pass    ──► app.tick(ctx, now_ms)                      │
+ │                                                               │
+ │  …and the app answers:                                         │
+ │    delivery_hash() · announce_data()   (what we announce)      │
+ │    start(ctx, wiring) ──► register dest · spawn tasks          │
+ │    ctx.dispatch(out) ──► actions to LoRa / WiFi                │
+ └───────────▲───────────────────────────────────┬────────────────┘
+             │ ctx.spawner                       │ on_events forwards
+   ┌─────────┴─────────┐                ┌────────▼────────────────┐
+   │ app's own tasks   │                │ responder (LXMF inbox)  │
+   │ led · persist ·   │                │ title + reply(content)  │
+   │ valve timing      │                │ → ack text, queued when │
+   └───────────────────┘                │   no path yet           │
+                                        └─────────────────────────┘
+```
+
+The app implements six methods; the loop calls them at fixed points;
+`Ctx` is everything the app may touch for one call.
+
 ## `Ctx` — everything an app may touch
 
 | field | what it is |
@@ -174,3 +201,16 @@ fails every comparison. `reply` maps the result:
 
 That is the whole app: ~50 lines of logic (`parse`, `reply`), two small
 tasks, and the responder owns the rest of LXMF.
+
+## Key points
+
+- **Apps are tiny by construction.** The mesh, identity, announce
+  cadence and retry policy are inherited; the app adds sensor +
+  actuator + a reply function.
+- **The protocol step stays in the loop.** The LXMF node borrows the
+  loop's `Node`, so it cannot move into a task — only hardware-driven
+  work (LED, flash, valve timing) is spawned.
+- **Tasks talk back through statics** (`Signal`/`Channel`/`Atomic`),
+  never through `Ctx` — no locks held across awaits.
+- **Every app announces its own destination** with a display name, so
+  the fleet sees it in `rnpath`/`rnstatus`.
