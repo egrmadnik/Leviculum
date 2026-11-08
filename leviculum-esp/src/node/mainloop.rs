@@ -67,13 +67,20 @@ pub async fn run<B: crate::node::board::Board, A: App>(
         }
 
         // ---- command ingress ---------------------------------------------
-        // Lines typed on the debug port go to the app.
+        // Lines typed on the debug port go to the app — except `WIFI …`,
+        // which is the carrier's own console (`wifi::on_line` applies the
+        // change to the running settings).
         let mut rx = [0u8; 64];
         let n = ctx.log.read_bytes(&mut rx);
         for &b in &rx[..n] {
             if b == b'\n' || b == b'\r' {
                 if rx_len > 0 {
                     let line = core::str::from_utf8(&rx_line[..rx_len]).unwrap_or("");
+                    #[cfg(feature = "wifi")]
+                    if crate::node::wifi::on_line(line, ctx.log, ctx.flash) {
+                        rx_len = 0;
+                        continue;
+                    }
                     app.on_line(&mut ctx, line);
                     rx_len = 0;
                 }

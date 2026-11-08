@@ -16,6 +16,8 @@
 //! 0x701000  ID slot:   "IDT1" (4 B) + private key (64 B) + crc32 (4 B)
 //! 0x702000  blink slot: "LBLK" (4 B) + frequency in hundredths of a hertz
 //!           (u16 LE) + check word (the frequency XOR 0xB11C, u16 LE)
+//! 0x703000  wifi slot: "WFI2" record — ssid, psk, UDP port/forward, TCP
+//!           target, CRC-guarded (`node::wifi::settings`, `wifi` feature)
 //! ```
 //!
 //! No wear levelling: a config write is a user event, dozens a year
@@ -140,4 +142,35 @@ pub fn save_blink(
     buf[6..8].copy_from_slice(&(centi_hz ^ BLINK_CHECK_MASK).to_le_bytes());
     store.erase(BLINK_SLOT, BLINK_SLOT + SECTOR)?;
     store.write(BLINK_SLOT, &buf)
+}
+
+/// The WiFi settings slot, the sector after the blink slot.
+#[cfg(feature = "wifi")]
+const WIFI_SLOT: u32 = 0x0070_3000;
+
+/// The persisted WiFi settings, or `None` when the slot is blank or its
+/// record does not decode (magic, bounds, CRC) — both mean "use the
+/// compiled defaults".
+#[cfg(feature = "wifi")]
+pub fn load_wifi_settings(
+    store: &mut esp_storage::FlashStorage<'_>,
+) -> Option<crate::node::wifi::settings::WifiSettings> {
+    use crate::node::wifi::settings;
+    let mut buf = [0u8; settings::FRAME_MAX];
+    if store.read(WIFI_SLOT, &mut buf).is_err() {
+        return None;
+    }
+    settings::frame_decode(&buf)
+}
+
+/// Persist the WiFi settings: erase the sector, write the record.
+#[cfg(feature = "wifi")]
+pub fn save_wifi_settings(
+    store: &mut esp_storage::FlashStorage<'_>,
+    s: &crate::node::wifi::settings::WifiSettings,
+) -> Result<(), esp_storage::FlashStorageError> {
+    use crate::node::wifi::settings;
+    let frame = settings::frame_encode(s);
+    store.erase(WIFI_SLOT, WIFI_SLOT + SECTOR)?;
+    store.write(WIFI_SLOT, &frame)
 }

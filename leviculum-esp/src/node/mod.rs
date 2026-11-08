@@ -81,12 +81,18 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
     if carrier.is_up() {
         reticulum::register_interface(&mut node);
     }
-    // The WiFi interfaces are ids 1 and 2, when the feature is on and an
-    // SSID was compiled in. The stack's seed wants any entropy at all;
-    // uptime at this point in boot is plenty and asks nothing of the TRNG
-    // the node already owns.
+    // The WiFi interfaces are ids 1 and 2. The settings come from the
+    // flash slot when one is stored, otherwise from the compiled env
+    // defaults; either way they can be changed on the debug port
+    // (`WIFI …` commands) without a rebuild.
     #[cfg(feature = "wifi")]
-    if wifi::start(spawner, system.wifi, crate::uptime_ms(), &mut boot.log) {
+    if wifi::start(
+        spawner,
+        system.wifi,
+        crate::uptime_ms(),
+        &mut flash,
+        &mut boot.log,
+    ) {
         wifi::register_interfaces(&mut node);
     }
     let flash = storage::share(flash);

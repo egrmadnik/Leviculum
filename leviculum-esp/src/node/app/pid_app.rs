@@ -271,9 +271,7 @@ impl PidApp {
                 .send_single_packet(&DestinationHash::new(target), &on_air)
             {
                 Ok((_pkt_hash, out)) => ctx.dispatch(out),
-                Err(_) => ctx
-                    .log
-                    .line("[PID] ", format_args!("lxmf=send-failed")),
+                Err(_) => ctx.log.line("[PID] ", format_args!("lxmf=send-failed")),
             }
         } else {
             let mut mhex = [0u8; 1080];
@@ -355,9 +353,7 @@ impl PidApp {
                 match pid::Config::decode(&frame) {
                     Ok(cfg) if cfg.sample_ms > 0 && cfg.window_ms > 0 => {
                         self.pid.set_config(cfg, crate::uptime_ms());
-                        let saved =
-                            save_config(ctx, &cfg, self.report_target.as_ref())
-                                .is_ok();
+                        let saved = save_config(ctx, &cfg, self.report_target.as_ref()).is_ok();
                         ctx.log.line(
                             "[PID] ",
                             format_args!("cmd=import result=ok persisted={}", saved),

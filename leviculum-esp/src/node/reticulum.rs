@@ -32,7 +32,10 @@ pub type Node = NodeCore<Trng, EspClock, MemoryStorage>;
 ///
 /// The caller must hold a `TrngSource` for as long as the node lives: the
 /// TRNG only unlocks while one exists.
-pub fn identity(log: &mut UsbLog<'static>, flash: &mut esp_storage::FlashStorage<'static>) -> Identity {
+pub fn identity(
+    log: &mut UsbLog<'static>,
+    flash: &mut esp_storage::FlashStorage<'static>,
+) -> Identity {
     match store::load_identity(flash).and_then(|k| Identity::from_private_key_bytes(&k).ok()) {
         Some(id) => {
             log.line("[IDENTITY] ", format_args!("identity=restored"));

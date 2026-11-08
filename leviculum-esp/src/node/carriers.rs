@@ -72,8 +72,14 @@ pub fn start<B: Board>(boot: &mut Booted, w: LoraWiring) -> Carrier {
     let mut radio = Radio::new(Sx1262Bus::new(spi, nss, busy), reset, dio1, rxen);
     let up = match radio.init(p.freq_hz) {
         Ok(chip_status) => {
-            match radio.configure(p.freq_hz, p.sf, p.bw_code, p.cr_code, p.power_dbm, p.preamble_symbols)
-            {
+            match radio.configure(
+                p.freq_hz,
+                p.sf,
+                p.bw_code,
+                p.cr_code,
+                p.power_dbm,
+                p.preamble_symbols,
+            ) {
                 Ok(program) => {
                     let _ = radio.listen();
                     boot.log.line(
@@ -159,7 +165,11 @@ impl Carrier {
             let data: Vec<u8> = match action {
                 // Only LoRa-bound traffic goes on the air — a SendPacket
                 // for another interface (the WiFi ids) is not ours.
-                Action::SendPacket { iface, data, .. } if iface == InterfaceId(0) => data,
+                Action::SendPacket {
+                    iface: InterfaceId(0),
+                    data,
+                    ..
+                } => data,
                 Action::Broadcast {
                     data,
                     exclude_iface,
