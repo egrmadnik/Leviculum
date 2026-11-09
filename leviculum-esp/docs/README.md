@@ -21,6 +21,7 @@ build.
 |---|---|
 | `architecture.md` | the layered stack, boot order, interfaces, packet flow, feature flags, flash map |
 | `build-and-flash.md` | the `esp` toolchain, `cargo build --release`, `espflash save-image`/`flash`, `just build-esp32` |
+| `explain/how-firmware-builds.md` | what a feature like `lxmf-blink` is and how the build pipeline works |
 | `bin.md` | the four binaries — `xiao_s3` (the LNode), `xiao_s3_auto`, `xiao_s3_echo`, `heltec_v4` — and the full XIAO S3 pin map |
 | `boards.md` | the per-board pin modules: the class/per-board split, `BoardConfig`, the compile-time pin contract |
 | `node/board.md` | the `Board` seam: one trait, five wiring bundles |
