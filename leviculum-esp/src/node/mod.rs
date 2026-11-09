@@ -81,9 +81,29 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
     let _trng_src = TrngSource::new(system.rng, system.adc1);
     let identity = reticulum::identity(&mut boot.log, &mut flash);
     let mut node = reticulum::build(&identity);
+    // The node's address: the 16-byte Reticulum identity hash, hex, so a
+    // capture identifies the node without any tool.
+    {
+        let h = node.identity().hash();
+        boot.log
+            .line("[NODE] ", format_args!("hash={}", to_hex(h)));
+    }
     if carrier.is_up() {
         reticulum::register_interface(&mut node);
     }
+    #[cfg(feature = "wifi")]
+    {
+        boot.log.line(
+            "[IFACE] ",
+            format_args!(
+                "id=0 name=lora_sx1262 mtu=508 · id={} name=wifi_udp mtu=1400 · id={} name=wifi_tcp mtu=1500",
+                wifi::UDP_IFACE.0, wifi::TCP_IFACE.0
+            ),
+        );
+    }
+    #[cfg(not(feature = "wifi"))]
+    boot.log
+        .line("[IFACE] ", format_args!("id=0 name=lora_sx1262 mtu=508"));
     // The WiFi interfaces are ids 1 and 2. The settings come from the
     // flash slot when one is stored, otherwise from the compiled env
     // defaults; either way they can be changed on the debug port
@@ -148,4 +168,15 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
     {
         mainloop::run::<B, DefaultApp>(ctx, app, sensors, status_led, led_active_high).await
     }
+}
+
+/// `bytes` as lowercase hex, for the hash log lines.
+fn to_hex(bytes: &[u8]) -> alloc::string::String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = alloc::string::String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
 }
