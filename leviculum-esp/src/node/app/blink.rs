@@ -244,5 +244,7 @@ pub fn reply(content: &[u8]) -> Vec<u8> {
             );
         }
     }
+    #[cfg(feature = "display")]
+    crate::node::display::log_exchange(content, out.as_bytes());
     out.into_bytes()
 }

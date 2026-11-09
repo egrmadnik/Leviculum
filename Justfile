@@ -151,13 +151,15 @@ build-esp32:
     export PATH="$HOME/.cargo/bin:$PATH"
     cd leviculum-esp
     cargo fmt --check
-    cargo clippy --release -- -D warnings
+    # `display` is the OLED support — the V4's own panel, the XIAO kit's
+    # Qwiic add-on — so the gate lints and builds it for every bin.
+    cargo clippy --release --features display -- -D warnings
     # The root `doc-gate` runs `cargo doc --workspace`, which by
     # construction never reaches an excluded workspace. Broken intra-doc
     # links here would therefore be caught by nothing, so the gate is
     # repeated where it applies.
     RUSTDOCFLAGS="-D warnings" cargo doc --release --no-deps
-    cargo build --release
+    cargo build --release --features display
     for bin in heltec_v4 xiao_s3; do
         espflash save-image --chip esp32s3 --flash-size 16mb \
             target/xtensa-esp32s3-none-elf/release/$bin \

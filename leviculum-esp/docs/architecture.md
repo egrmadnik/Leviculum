@@ -16,6 +16,11 @@ src/boards/xiao_s3.rs     named pin aliases + BoardConfig (banner text)
 src/node/                 all shared behaviour, split by function
 ```
 
+The board files and binaries are documented in full in `docs/bin.md`
+(four binaries, two architectures, the XIAO S3 pin map) and
+`docs/boards.md` (the class/per-board split, `BoardConfig`, the
+compile-time pin contract).
+
 ## The whole shape
 
 ```
@@ -188,6 +193,7 @@ TickOutput ──► Ctx::dispatch
 | `lxmf-echo` | `echo` — LXMF echo inbox |
 | `lxmf-blink` | `blink` — LED blinker (owns the status LED) |
 | `wifi` | the WiFi carrier (UDP + TCP interfaces) |
+| `display` | the V4's SSD1315 OLED status screen (`src/display.rs`, shared `leviculum-screen` painter) |
 | `bmv080-sdk`, `bme690` | the I2C sensor drivers |
 
 `lxmf-echo` and `lxmf-blink` are mutually exclusive (compile_error).
@@ -241,3 +247,8 @@ See `docs/node/` for one file per module:
 - `mainloop.md` — the cooperative event loop
 - `peripherals.md` — the I2C add-on sensors
 - `wifi.md` — the WiFi carrier, runtime settings, tasks
+- `display.md` — the LNode's status screen (Qwiic OLED add-on)
+
+Around it: `docs/bin.md` (the binaries: `xiao_s3`, `xiao_s3_auto`,
+`xiao_s3_echo`, `heltec_v4`) and `docs/boards.md` (the pin-map
+modules: `xiao_s3`, `heltec_v4`).

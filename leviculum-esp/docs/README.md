@@ -9,6 +9,8 @@ build.
 │  README.md        ← you are here (the index)  │
 │  architecture.md  ← the whole system, top-down│
 │  build-and-flash.md ← toolchain → .bin → board│
+│  bin.md           ← the four board binaries   │
+│  boards.md        ← the pin-map modules       │
 │  node/            ← one file per module       │
 └───────────────────────────────────────────────┘
 ```
@@ -19,6 +21,8 @@ build.
 |---|---|
 | `architecture.md` | the layered stack, boot order, interfaces, packet flow, feature flags, flash map |
 | `build-and-flash.md` | the `esp` toolchain, `cargo build --release`, `espflash save-image`/`flash`, `just build-esp32` |
+| `bin.md` | the four binaries — `xiao_s3` (the LNode), `xiao_s3_auto`, `xiao_s3_echo`, `heltec_v4` — and the full XIAO S3 pin map |
+| `boards.md` | the per-board pin modules: the class/per-board split, `BoardConfig`, the compile-time pin contract |
 | `node/board.md` | the `Board` seam: one trait, five wiring bundles |
 | `node/boot.md` | the debug log, banner cadence, halt-vs-degraded policy |
 | `node/carriers.md` | the LoRa carrier: RX/TX paths, interface 0 |
@@ -29,6 +33,7 @@ build.
 | `node/mainloop.md` | the cooperative event loop, one pass at a time |
 | `node/peripherals.md` | the I2C add-on sensors (BMV080, BME690) |
 | `node/wifi.md` | the WiFi carrier: tasks, channels, runtime settings |
+| `node/display.md` | the LNode's status screen (Qwiic OLED add-on) |
 
 ## The architecture in five lines
 

@@ -24,6 +24,7 @@ pub async fn run<B: crate::node::board::Board, A: App>(
     mut ctx: Ctx<'_>,
     mut app: A,
     mut sensors: Sensors,
+    #[cfg(feature = "display")] mut display: Option<crate::node::display::Display>,
     mut led: Option<esp_hal::gpio::Output<'static>>,
     led_active_high: bool,
 ) -> ! {
@@ -93,6 +94,11 @@ pub async fn run<B: crate::node::board::Board, A: App>(
             }
         }
 
+        #[cfg(feature = "display")]
+        if let Some(display) = display.as_mut() {
+            display.poll_button();
+        }
+
         app.tick(&mut ctx, crate::uptime_ms());
 
         // Sleep: the executor runs the app's own tasks meanwhile.
@@ -100,6 +106,10 @@ pub async fn run<B: crate::node::board::Board, A: App>(
 
         if crate::uptime_ms() >= next_banner {
             sensors.banner(ctx.log);
+            #[cfg(feature = "display")]
+            if let Some(display) = display.as_mut() {
+                display.render(ctx.log);
+            }
             if let Some(led) = led.as_mut() {
                 boot::blink(led, led_active_high);
             }

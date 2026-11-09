@@ -25,6 +25,8 @@ pub mod app;
 pub mod board;
 pub mod boot;
 pub mod carriers;
+#[cfg(feature = "display")]
+pub mod display;
 pub mod mainloop;
 pub mod peripherals;
 #[cfg(any(feature = "lxmf-echo", feature = "lxmf-blink"))]
@@ -61,6 +63,7 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
         led,
         lora,
         sensors,
+        display: display_wiring,
         mut app,
     } = B::wire(p);
 
@@ -70,7 +73,7 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
 
     let mut boot = boot::early::<B>(system.usb, led);
     let mut carrier = carriers::start::<B>(&mut boot, lora);
-    let sensors = peripherals::start::<B>(&mut boot, sensors);
+    let (sensors, i2c_bus) = peripherals::start::<B>(&mut boot, sensors);
 
     let mut flash = esp_storage::FlashStorage::new(system.flash);
     // The TRNG source has to be held for `Trng::try_new` to succeed — it
@@ -96,6 +99,16 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
         wifi::register_interfaces(&mut node);
     }
     let flash = storage::share(flash);
+
+    // The status display, when the board carries an OLED: built over
+    // the shared sensor bus, showing the node's identity and counters
+    // from the main loop's banner tick. A panel that refuses to come
+    // up is logged and the node runs on without it.
+    #[cfg(feature = "display")]
+    let display = display_wiring
+        .and_then(|dw| display::Display::new(dw, *node.identity().hash(), i2c_bus, &mut boot.log));
+    #[cfg(not(feature = "display"))]
+    let _ = i2c_bus;
 
     let radio_up = carrier.is_up();
     // The log goes into the context; the loop keeps only the LED, unless
@@ -126,5 +139,13 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
         ctx.log.line("[LORA] ", format_args!("mesh=announced"));
     }
 
-    mainloop::run::<B, DefaultApp>(ctx, app, sensors, status_led, led_active_high).await
+    #[cfg(feature = "display")]
+    {
+        mainloop::run::<B, DefaultApp>(ctx, app, sensors, display, status_led, led_active_high)
+            .await
+    }
+    #[cfg(not(feature = "display"))]
+    {
+        mainloop::run::<B, DefaultApp>(ctx, app, sensors, status_led, led_active_high).await
+    }
 }

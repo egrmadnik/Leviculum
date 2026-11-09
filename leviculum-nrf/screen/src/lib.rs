@@ -296,17 +296,7 @@ impl StatusModel<'_> {
         target: &mut D,
         width: u32,
     ) -> Result<(), D::Error> {
-        target.clear(BinaryColor::Off)?;
-
-        let style = MonoTextStyleBuilder::new()
-            .font(&FONT_6X10)
-            .text_color(BinaryColor::On)
-            .build();
-
-        for (i, line) in self.lines().iter().enumerate() {
-            let y = (i as i32) * LINE_PITCH;
-            Text::with_baseline(line, Point::new(0, y), style, Baseline::Top).draw(target)?;
-        }
+        paint_lines(target, &self.lines())?;
 
         // Heartbeat marker — a 2×2 dot in the top-right corner, drawn only
         // during the "on" phase. Tells you "the firmware loop is alive"
@@ -318,6 +308,32 @@ impl StatusModel<'_> {
         }
         Ok(())
     }
+}
+
+/// Paint up to [`LINES`] text lines at the status screen's positions:
+/// clear, then FONT_6X10 at [`LINE_PITCH`] pitch from the top. The
+/// heartbeat dot is not drawn — [`StatusModel::paint`] adds it after
+/// this, and a second page (a message log, on the ESP boards) draws
+/// nothing but the lines.
+///
+/// `lines` beyond [`LINES`] are ignored; shorter slices leave the rest
+/// of the panel blank.
+pub fn paint_lines<D: DrawTarget<Color = BinaryColor>>(
+    target: &mut D,
+    lines: &[heapless::String<24>],
+) -> Result<(), D::Error> {
+    target.clear(BinaryColor::Off)?;
+
+    let style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+
+    for (i, line) in lines.iter().take(LINES).enumerate() {
+        let y = (i as i32) * LINE_PITCH;
+        Text::with_baseline(line, Point::new(0, y), style, Baseline::Top).draw(target)?;
+    }
+    Ok(())
 }
 
 /// Render a finite coordinate as `{:.5}` would — sign, integer degrees,

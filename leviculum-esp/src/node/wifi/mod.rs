@@ -16,6 +16,7 @@
 //! config, the TCP task re-dials a new target, the UDP task rebinds a
 //! changed port. Nothing needs a rebuild.
 
+pub(crate) mod routing;
 pub(crate) mod settings;
 mod tcp;
 mod udp;
@@ -195,38 +196,33 @@ pub fn register_interfaces(node: &mut Node) {
 /// Route a `TickOutput`'s actions: WiFi-bound traffic into the socket
 /// tasks' channels, the rest back for the LoRa carrier. Broadcast goes
 /// to every medium the exclusion does not name.
+///
+/// The per-action decision is the pure matrix in [`routing`] — this
+/// function only carries it to the channels.
 pub fn egress(mut out: TickOutput) -> TickOutput {
     let actions = core::mem::take(&mut out.actions);
     for action in actions {
-        match action {
-            Action::SendPacket {
-                iface, ref data, ..
-            } if iface == UDP_IFACE => {
-                log_str(alloc::format!("tx=udp len={}", data.len()));
-                let _ = udp::TX.try_send(frame(data));
-            }
-            Action::SendPacket {
-                iface, ref data, ..
-            } if iface == TCP_IFACE => {
-                log_str(alloc::format!("tx=tcp len={}", data.len()));
-                let _ = tcp::TX.try_send(frame(data));
-            }
-            Action::SendPacket { .. } => out.actions.push(action),
-            Action::Broadcast {
-                ref data,
-                exclude_iface,
-                ..
-            } => {
-                if exclude_iface != Some(UDP_IFACE) {
-                    let _ = udp::TX.try_send(frame(data));
-                }
-                if exclude_iface != Some(TCP_IFACE) {
-                    let _ = tcp::TX.try_send(frame(data));
-                }
-                if exclude_iface != Some(InterfaceId(0)) {
-                    out.actions.push(action);
-                }
-            }
+        let route = match &action {
+            Action::SendPacket { iface, .. } => routing::route(routing::Packet::Send {
+                iface: iface.0 as u8,
+            }),
+            Action::Broadcast { exclude_iface, .. } => routing::route(routing::Packet::Broadcast {
+                exclude: exclude_iface.map(|i| i.0 as u8),
+            }),
+        };
+        let data = match &action {
+            Action::SendPacket { data, .. } | Action::Broadcast { data, .. } => data,
+        };
+        if route.udp {
+            log_str(alloc::format!("tx=udp len={}", data.len()));
+            let _ = udp::TX.try_send(frame(data));
+        }
+        if route.tcp {
+            log_str(alloc::format!("tx=tcp len={}", data.len()));
+            let _ = tcp::TX.try_send(frame(data));
+        }
+        if route.lora {
+            out.actions.push(action);
         }
     }
     out

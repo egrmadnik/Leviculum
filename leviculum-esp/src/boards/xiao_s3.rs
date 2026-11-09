@@ -118,24 +118,27 @@ pub const LORA_TCXO_VOLTAGE_1V8: () = ();
 // Indicators
 // ---------------------------------------------------------------------
 
-/// User LED, the yellow `USER_LED` on the XIAO ESP32-S3: **GPIO21, active
-/// LOW** (the LED only lights with the pin driven low; Seeed's board
-/// pinout and the NuttX board docs agree, and the Arduino core's
-/// `LED_BUILTIN` is 21).
+/// The green status LED on **GPIO48, active high**.
 ///
-/// Upstream's `LED_POWER 48` is not this net: GPIO48 on the plain S3 is
-/// not an LED (on the Sense it is a camera pin), and the upstream
-/// `pins_arduino.h` contradicts the same file by mapping SCL onto 48.
-/// We take the board schematic's LED, not the variant header's.
-pub type LedPin<'d> = peripherals::GPIO21<'d>;
+/// This unit carries the LED on 48 (the plain XIAO's yellow USER_LED
+/// net, GPIO21, is a button here — see [`ButtonPin`]); a high level
+/// lights it. With the Blink app it is the app's LED: it blinks at the
+/// remotely-commanded frequency, which doubles as the board's heartbeat.
+pub type LedPin<'d> = peripherals::GPIO48<'d>;
 
-/// False: [`LedPin`] is wired to conduct toward the pin, so LOW lights it.
-pub const LED_ACTIVE_HIGH: bool = false;
+/// True when driving [`LedPin`] high lights the LED.
+pub const LED_ACTIVE_HIGH: bool = true;
 
-// Buttons — the XIAO ESP32-S3's BOOT button is the ROM download strap, not
-// a general input. Upstream maps `BUTTON_PIN 21`, which is the LED's net,
-// so the button pin is deliberately not declared: nothing needs it, and
-// carrying a wrong pin is worse than carrying none.
+/// The kit's user button on **GPIO21**, low when pressed.
+///
+/// The plain XIAO's yellow USER_LED net — on this unit a button, not
+/// an LED. Read with the internal pull-up; the display's page-switch
+/// polling debounces it. The pin must never be driven as an output:
+/// pressing the button would short the drive to ground.
+pub type ButtonPin<'d> = peripherals::GPIO21<'d>;
+
+// The XIAO's BOOT button is the ROM download strap, not a general
+// input; the user button above is the one firmware reads.
 
 // ---------------------------------------------------------------------
 // Battery — none

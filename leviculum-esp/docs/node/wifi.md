@@ -109,8 +109,9 @@ re-read the settings each cycle and react:
 - `udp::task` — rebinds on a changed port.
 
 Persistence: `WIFI SAVE` writes a CRC-guarded record to flash; the
-next boot starts from it. The command grammar and the frame codec are
-pure and host-tested (`rustc --test src/node/wifi/settings.rs`).
+next boot starts from it. The command grammar, the frame codec and the
+egress routing matrix are pure and host-tested (`rustc --test
+src/node/wifi/settings.rs`, `rustc --test src/node/wifi/routing.rs`).
 
 `start` also swaps the allocator story: with `wifi`, `esp-alloc` is the
 single global heap (192 KiB) shared by the driver and Rust `alloc`

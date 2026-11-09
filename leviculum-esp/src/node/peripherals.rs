@@ -15,7 +15,7 @@ use esp_hal::Blocking;
 
 use crate::node::board::{Board, SensorWiring};
 use crate::node::boot::{self, Booted};
-use crate::{bme690, bmv080, UsbLog};
+use crate::{bme690, bmv080, SharedI2c, UsbLog};
 
 /// The sensors, and the bus they share.
 pub struct Sensors {
@@ -31,7 +31,13 @@ pub struct Sensors {
 }
 
 /// Open the bus and ask each sensor whether it is there, once.
-pub fn start<B: Board>(boot: &mut Booted, w: SensorWiring) -> Sensors {
+///
+/// Returns the [`Sensors`] and the [`SharedI2c`] handle to the same
+/// bus, so the status display (which shares the Qwiic pair) can write
+/// through it from the main loop's banner tick. The handle is
+/// unconditional — the bus itself always exists, sensor features or
+/// not.
+pub fn start<B: Board>(boot: &mut Booted, w: SensorWiring) -> (Sensors, SharedI2c<'static>) {
     let mut i2c = match I2c::new(w.i2c, I2cConfig::default()) {
         Ok(i2c) => Box::new(i2c.with_sda(w.sda).with_scl(w.scl)),
         Err(_) => {
@@ -49,13 +55,14 @@ pub fn start<B: Board>(boot: &mut Booted, w: SensorWiring) -> Sensors {
     // The bus is shared: BMV080 and BME690 both live on these two pins,
     // so it is handed out as a `SharedI2c` — one handle per driver,
     // exclusivity enforced by sequencing rather than by the type system
-    // (see `SharedI2c` in lib.rs).
-    #[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
+    // (see `SharedI2c` in lib.rs). The display gets the same handle:
+    // its blocking writes come from the same single thread and never
+    // yield, so no two users can interleave.
     let bus = {
         // SAFETY of the lifetime: the box lives in the returned `Sensors`,
         // which lives for the rest of the program.
         let ptr: *mut I2c<'static, Blocking> = &mut *i2c;
-        crate::SharedI2c::new(unsafe { &mut *ptr })
+        SharedI2c::new(unsafe { &mut *ptr })
     };
 
     let log = &mut boot.log;
@@ -171,15 +178,18 @@ pub fn start<B: Board>(boot: &mut Booted, w: SensorWiring) -> Sensors {
         ),
     }
 
-    Sensors {
-        _i2c: i2c,
-        #[cfg(feature = "bmv080-sdk")]
-        bmv080,
-        #[cfg(feature = "bmv080-sdk")]
-        sink: bmv080::sdk::Measurement::default(),
-        #[cfg(feature = "bme690")]
-        bme,
-    }
+    (
+        Sensors {
+            _i2c: i2c,
+            #[cfg(feature = "bmv080-sdk")]
+            bmv080,
+            #[cfg(feature = "bmv080-sdk")]
+            sink: bmv080::sdk::Measurement::default(),
+            #[cfg(feature = "bme690")]
+            bme,
+        },
+        bus,
+    )
 }
 
 impl Sensors {

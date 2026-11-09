@@ -44,6 +44,11 @@ lxmf-echo = []
 # by LXMF message (`blink <Hz>`), each change acknowledged by reply and
 # saved to flash. Alternative to `lxmf-echo`.
 lxmf-blink = []
+# The V4's OLED status display (`src/display.rs`): a hand-rolled SSD1315
+# I2C driver painting the shared `leviculum-screen` status model (the
+# same golden frames the nRF boards show). Only the Heltec V4 carries a
+# panel; the XIAO kit's builds gain nothing but the module.
+display = ["dep:leviculum-screen"]
 # WiFi interfaces (src/node/wifi/): the ESP32-S3's station radio carries
 # Reticulum on UDP and TCP alongside LoRa, as interfaces 1 and 2. The
 # network to join is compile-time: `LEVICULUM_WIFI_SSID`/`_PSK` at build
@@ -97,6 +102,15 @@ leviculum-lxmf = { path = "../leviculum-lxmf", default-features = false }
 # report). `src/automation.rs` is its HAL on this chip; `bin/xiao_s3_auto`
 # is the wrapper.
 leviculum-automation = { path = "../leviculum-automation" }
+# The board-independent status-screen painter, shared verbatim with
+# `leviculum-nrf` (`leviculum-nrf/screen`): the V4's OLED shows the same
+# six-line model and heartbeat dot the nRF boards do, locked by the same
+# golden-frame host tests. Optional — only the `display` feature pulls
+# it.
+leviculum-screen = { path = "../leviculum-nrf/screen", optional = true }
+# The painter's identity-prefix type (`ident_short`), which the display
+# task stores for the screen's id line. Same version the painter uses.
+heapless = { version = "0.9", default-features = false }
 
 # The SX1262 buses are async, because `leviculum_core::sx126x`'s traits
 # are. `Spi<'_, Async>` implements `embedded_hal_async::spi::SpiBus`.

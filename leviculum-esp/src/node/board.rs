@@ -56,6 +56,25 @@ pub struct SensorWiring {
     pub scl: AnyPin<'static>,
 }
 
+/// An I2C OLED fitted on the board (`display` feature).
+///
+/// The panel shares the board's I2C bus — on the XIAO kit that is the
+/// Qwiic add-on pair, on the V4 the OLED's own nets — so this bundle
+/// deliberately carries no I2C peripheral and no SDA/SCL pins: the bus
+/// is opened once by `peripherals::start` and the display writes
+/// through the shared handle. What is this board's to declare is the
+/// panel's reset net (the Qwiic connector has none) and the page-switch
+/// button, when the board carries one (the XIAO kit's user button).
+pub struct DisplayWiring {
+    /// OLED reset, active low; `None` when the panel exposes no reset
+    /// net (a Qwiic-connected panel).
+    pub reset: Option<AnyPin<'static>>,
+    /// The button that flips the display between its pages, low when
+    /// pressed (the display polls it with a pull-up); `None` on boards
+    /// without one.
+    pub button: Option<AnyPin<'static>>,
+}
+
 /// Pins only the apps use: the PID app's 1-Wire temperature input and
 /// valve, and the status LED when the app owns it (the Blink app).
 pub struct AppWiring {
@@ -89,6 +108,9 @@ pub struct Wiring {
     pub led: AnyPin<'static>,
     pub lora: LoraWiring,
     pub sensors: SensorWiring,
+    /// The fitted OLED, if any (`display` feature; the XIAO kit's
+    /// Qwiic add-on, the V4's own panel).
+    pub display: Option<DisplayWiring>,
     pub app: AppWiring,
 }
 

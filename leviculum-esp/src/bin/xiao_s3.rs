@@ -22,7 +22,7 @@ use esp_hal::gpio::Pin;
 use esp_hal::peripherals::Peripherals;
 use leviculum_esp::boards::xiao_s3;
 use leviculum_esp::node::board::{
-    AppWiring, Board, LoraProfile, LoraWiring, SensorWiring, System, Wiring,
+    AppWiring, Board, DisplayWiring, LoraProfile, LoraWiring, SensorWiring, System, Wiring,
 };
 
 // The application descriptor the second-stage bootloader reads. Without it
@@ -48,11 +48,13 @@ impl Board for XiaoS3 {
         preamble_symbols: 18,
         power_dbm: 22,
     };
-    // The module's yellow USER_LED on GPIO21, **active low**.
+    // The kit's green LED on GPIO48, **active high** (GPIO21 is the
+    // page-switch button here, not the plain XIAO's yellow LED).
     const LED_ACTIVE_HIGH: bool = xiao_s3::LED_ACTIVE_HIGH;
 
     fn wire(p: Peripherals) -> Wiring {
-        let led: xiao_s3::LedPin = p.GPIO21;
+        let led: xiao_s3::LedPin = p.GPIO48;
+        let button: xiao_s3::ButtonPin = p.GPIO21;
 
         // The SX1262's port.
         let sck: xiao_s3::LoRaSck = p.GPIO7;
@@ -101,6 +103,16 @@ impl Board for XiaoS3 {
                 sda: sda.degrade(),
                 scl: scl.degrade(),
             },
+            // The Qwiic pair can carry an I2C OLED add-on (`display`
+            // feature): the panel shares the sensor bus, so the wiring
+            // is the (absent) reset net plus the page-switch button.
+            #[cfg(feature = "display")]
+            display: Some(DisplayWiring {
+                reset: None,
+                button: Some(button.degrade()),
+            }),
+            #[cfg(not(feature = "display"))]
+            display: None,
             app: AppWiring {
                 onewire: onewire.degrade(),
                 valve: valve.degrade(),

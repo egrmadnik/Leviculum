@@ -23,6 +23,13 @@ use crate::UsbLog;
 
 type LoraRadio = Radio<'static, Spi<'static, Async>>;
 
+/// Complete packets handed to the node, for the status screen's RX line
+/// (`node::display` reads these). LoRa only — the WiFi carrier's
+/// traffic is not counted here.
+pub static RX_PACKETS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Packets dispatched to the air, for the status screen's TX line.
+pub static TX_PACKETS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// The radio, plus the receive and transmit state that goes with it.
 pub struct Carrier {
     radio: Option<LoraRadio>,
@@ -134,7 +141,10 @@ impl Carrier {
                 let out = self
                     .reassembler
                     .feed(&self.lora_buf[..len as usize], self.rx_tick)
-                    .map(|packet| node.handle_packet(InterfaceId(0), &packet));
+                    .map(|packet| {
+                        RX_PACKETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                        node.handle_packet(InterfaceId(0), &packet)
+                    });
                 self.rx_tick = self.rx_tick.wrapping_add(1);
                 out
             }
@@ -162,6 +172,7 @@ impl Carrier {
             return;
         };
         for action in out.actions {
+            TX_PACKETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let data: Vec<u8> = match action {
                 // Only LoRa-bound traffic goes on the air — a SendPacket
                 // for another interface (the WiFi ids) is not ours.

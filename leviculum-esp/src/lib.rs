@@ -39,6 +39,8 @@ pub mod automation;
 pub mod bme690;
 pub mod bmv080;
 pub mod boards;
+#[cfg(feature = "display")]
+pub mod display;
 pub mod ds18b20;
 pub mod node;
 pub mod pid;
@@ -52,7 +54,6 @@ use core::mem::MaybeUninit;
 
 #[cfg(not(feature = "wifi"))]
 use embedded_alloc::LlffHeap as Heap;
-#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
 use esp_hal::i2c::master::I2c;
 use esp_hal::{
     clock::CpuClock,
@@ -168,14 +169,12 @@ pub fn uptime_ms() -> u64 {
 
 /// A shareable handle to the sensor I2C bus.
 ///
-/// Only exists when a sensor-driver feature is on — a probe-only build
-/// never shares the bus.
-///
 /// The add-on sensors this crate drives (BMV080, BME690, and whatever
-/// else lands on the Qwiic pair) can share the one `I2c` peripheral, and
+/// else lands on the Qwiic pair) share the one `I2c` peripheral, and
 /// each is reached through C callbacks that carry a `void*` — a shared
 /// `&mut` cannot model that: two drivers would each need an outstanding
-/// exclusive borrow.
+/// exclusive borrow. The status display reaches the same bus from the
+/// main loop's banner tick for the same reason.
 ///
 /// So the handle is a raw pointer, and the safety argument is
 /// topological: every driver call is synchronous on the single firmware
@@ -184,13 +183,16 @@ pub fn uptime_ms() -> u64 {
 /// `SharedI2c` exists to keep that contract visible — it is `Copy`, so
 /// any number of drivers may hold it; exclusivity is temporal, not
 /// lexical.
-#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
+///
+/// Defined unconditionally (not behind the sensor features): the
+/// display needs the same handle, and the argument above holds for it
+/// too — its blocking writes never yield, so no two bus users can
+/// interleave.
 #[derive(Clone, Copy)]
 pub struct SharedI2c<'d> {
     ptr: *mut I2c<'d, Blocking>,
 }
 
-#[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
 impl<'d> SharedI2c<'d> {
     /// Capture the bus. The caller hands over `&mut` once; afterwards the
     /// bus may only be driven through `SharedI2c`s — code that keeps its
@@ -203,9 +205,21 @@ impl<'d> SharedI2c<'d> {
     /// The raw pointer the C callback boundary threads back as `void*`.
     ///
     /// The pointer names the bus itself — a callback receives it and
-    /// reconstructs `&mut` for its transfer.
+    /// reconstructs `&mut` for its transfer. Only the Bosch C drivers
+    /// need it; the display writes through [`write`](Self::write).
+    #[cfg(any(feature = "bmv080-sdk", feature = "bme690"))]
     pub(crate) fn as_sercom(&self) -> *mut I2c<'d, Blocking> {
         self.ptr
+    }
+
+    /// One blocking master write. SAFETY: the caller holds exclusivity —
+    /// the synchronous, never-yielding discipline the struct documents.
+    pub fn write(&self, address: u8, buffer: &[u8]) -> Result<(), esp_hal::i2c::master::Error> {
+        // SAFETY: the pointer names the boxed bus, which lives for the
+        // rest of the program, and the caller holds exclusive access
+        // for the duration of this synchronous call (see the struct
+        // docs).
+        unsafe { (&mut *self.ptr).write(address, buffer) }
     }
 }
 
