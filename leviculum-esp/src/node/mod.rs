@@ -85,8 +85,7 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
     // capture identifies the node without any tool.
     {
         let h = node.identity().hash();
-        boot.log
-            .line("[NODE] ", format_args!("hash={}", to_hex(h)));
+        boot.log.line("[NODE] ", format_args!("hash={}", to_hex(h)));
     }
     if carrier.is_up() {
         reticulum::register_interface(&mut node);
@@ -138,13 +137,13 @@ pub async fn run<B: Board>(spawner: Spawner) -> ! {
         led,
         led_active_high,
     } = boot;
+    // The board's LED is the heartbeat: a 1 Hz alive pulse that owns
+    // the pin outright. Neither the banner nor an app blinks it — the
+    // Blink app on this kit has no LED of its own (GPIO21 is the
+    // page-switch button, GPIO48 is the heartbeat).
+    spawner.spawn(heartbeat(led, led_active_high).expect("heartbeat task pool"));
     app.led_active_high = led_active_high;
-    let status_led = if DefaultApp::OWNS_STATUS_LED {
-        app.led = Some(led);
-        None
-    } else {
-        Some(led)
-    };
+    let status_led = None;
     let mut ctx = Ctx {
         node: &mut node,
         carrier: &mut carrier,
@@ -179,4 +178,23 @@ fn to_hex(bytes: &[u8]) -> alloc::string::String {
         out.push(HEX[(b & 0xf) as usize] as char);
     }
     out
+}
+
+/// The board LED's heartbeat: 100 ms on every second, so a battery node
+/// shows it is alive with no cable attached. Owns the pin outright —
+/// the banner and the apps do not touch it, and a blink command can
+/// never leave the LED latched on.
+#[embassy_executor::task]
+async fn heartbeat(mut led: esp_hal::gpio::Output<'static>, active_high: bool) {
+    let (on, off) = if active_high {
+        (esp_hal::gpio::Level::High, esp_hal::gpio::Level::Low)
+    } else {
+        (esp_hal::gpio::Level::Low, esp_hal::gpio::Level::High)
+    };
+    loop {
+        led.set_level(on);
+        embassy_time::Timer::after_millis(100).await;
+        led.set_level(off);
+        embassy_time::Timer::after_millis(900).await;
+    }
 }

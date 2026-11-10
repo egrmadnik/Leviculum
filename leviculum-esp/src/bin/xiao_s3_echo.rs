@@ -49,12 +49,12 @@ use leviculum_esp::{
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// Radijski profil za hitro lokalno stacionarno mrežo (`/etc/reticulum/config`):
-/// 869.463 MHz, SF7, BW 250 kHz (0x05), CR 4/5 (0x01), 22 dBm.
+/// Fleet-wide radio profile — every leviculum device runs the same
+/// channel: 869.463 MHz, SF8, BW 125 kHz (0x04), CR 4/5 (0x01), 22 dBm.
 const LORA_FREQ: u32 = 869_463_000;
-const LORA_SF: u8 = 7;
-const LORA_BW: u8 = 0x05; // 250 kHz (SX1262 Table 14-47)
-const LORA_BW_HZ: u32 = 250_000;
+const LORA_SF: u8 = 8;
+const LORA_BW: u8 = 0x04; // 125 kHz (SX1262 Table 14-47)
+const LORA_BW_HZ: u32 = 125_000;
 const LORA_CR: u8 = 0x01; // CR 4/5
 const LORA_CR_DENOM: u8 = 5;
 const LORA_TX_POWER_DBM: i8 = 22;

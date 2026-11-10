@@ -90,12 +90,14 @@ pub struct BlinkApp {
 }
 
 impl App for BlinkApp {
-    const OWNS_STATUS_LED: bool = true;
+    // The board's LED is the heartbeat's (node::heartbeat), not the
+    // app's — on the XIAO kit the blink app has no LED of its own.
+    const OWNS_STATUS_LED: bool = false;
 
     fn start(ctx: &mut Ctx<'_>, w: AppWiring) -> Self {
-        let led = w.led.expect("the Blink app owns the status LED");
         // Read the stored frequency (a blank, corrupt or out-of-range record
-        // means the default) and spawn the two tasks.
+        // means the default) and spawn the tasks. The LED task only runs
+        // when the board actually wired one to the app.
         let (initial, source) = match ctx.with_flash(store::load_blink) {
             Some(c) if valid(c) => (c, "stored"),
             _ => (DEFAULT_CENTI_HZ, "default"),
@@ -105,8 +107,10 @@ impl App for BlinkApp {
             "[BLINK] ",
             format_args!("start hz={} src={}", Hz(initial), source),
         );
-        ctx.spawner
-            .spawn(led_task(led, w.led_active_high, initial).expect("led task pool"));
+        if let Some(led) = w.led {
+            ctx.spawner
+                .spawn(led_task(led, w.led_active_high, initial).expect("led task pool"));
+        }
         ctx.spawner
             .spawn(persist_task(ctx.flash).expect("persist task pool"));
 

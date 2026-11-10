@@ -219,18 +219,16 @@ async fn main(spawner: Spawner) {
     .await;
     info!("SX1262 ready");
 
-    // Privzeti radijski profil za hitro lokalno stacionarno mrežo:
-    // 869.463 MHz, SF7, BW 250 kHz, CR 4/5, 22 dBm (ujema se z /etc/reticulum/config).
-    // Če je vozlišče priključeno na `lnsd` prek USB, lahko `lnsd` te parametre
-    // kadarkoli dinamično prepiše prek serijskega kontrolnega okvirja.
+    // Fleet-wide radio profile — every leviculum device runs the same
+    // channel: 869.463 MHz, SF8, BW 125 kHz, CR 4/5, 22 dBm.
     let radio_cfg = leviculum_nrf::lora::RadioConfig {
         frequency_hz: 869_463_000,
-        sf: 7,
-        bw: 0x05, // 250 kHz (SX1262 Table 14-47)
+        sf: 8,
+        bw: 0x04, // 125 kHz (SX1262 Table 14-47)
         cr: 0x01, // CR 4/5
         tx_power_dbm: leviculum_core::rnode::DEFAULT_TX_POWER_DBM,
-        preamble_len: leviculum_core::rnode::derive_preamble_symbols(7, 5, 250_000),
-        bw_hz: 250_000,
+        preamble_len: leviculum_core::rnode::derive_preamble_symbols(8, 5, 125_000),
+        bw_hz: 125_000,
         cr_denom: 5,
         csma_enabled: true,
         radio_silent: false,
